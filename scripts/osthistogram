@@ -1,0 +1,54 @@
+#!/usr/bin/env python
+
+import glob
+import sys
+import subprocess
+
+def tally_file_stripe_info(filename, bin_dict):
+    try:
+        lfs = subprocess.Popen(['lfs', 'getstripe', '-q', filename],
+                               stdout=subprocess.PIPE)
+    except:
+        print >>sys.stderr, 'Unable to execute "lfs".'
+        return 3
+    for line in lfs.stdout:
+        args = line.split()
+        if len(args) != 4:
+            continue
+        if args[0] == 'obdidx':
+            continue
+        obdidx = int(args[0])
+        if obdidx not in bin_dict:
+            bin_dict[obdidx] = 0
+        bin_dict[obdidx] += 1
+
+def main():
+    bins = {}
+    if len(sys.argv) <= 1:
+        # read file names from stdin
+        for f in sys.stdin:
+            tally_file_stripe_info(f.strip(), bins)
+    else:
+        for arg in sys.argv[1:]:
+            if arg == '-':
+                # read file names from stdin
+                for f in sys.stdin:
+                    tally_file_stripe_info(f.strip(), bins)
+            else:
+                for f in glob.glob(arg):
+                    tally_file_stripe_info(f, bins)
+
+    biggest = max(bins.values())
+    if biggest < 66:
+        scaler = 1
+    else:
+        scaler = biggest / 66.0
+    keys = bins.keys()
+    keys.sort()
+    for key in keys:
+        print "%-6d %-5d " % (key, bins[key]),
+        print "-" * int(bins[key] / scaler)
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main())

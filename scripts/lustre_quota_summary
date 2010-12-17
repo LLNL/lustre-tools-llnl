@@ -1,0 +1,199 @@
+#!/usr/bin/env python
+
+from subprocess import Popen, PIPE
+import sys
+import os
+import operator
+import optparse
+
+def try_int(st):
+    """Convert string to integer if possible.  Otherwise, return string."""
+    try:
+        return int(st)
+    except:
+        pass
+    try:
+        st.strip('[]')
+        return int(st)
+    except:
+        pass
+    return st
+
+def shorten_size(kbytes, significant_digits):
+    base = 1024
+    units = ['KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+    #base = 1000
+    #units = ['KB', 'MB', 'GB', 'TB', 'PB']
+    for i, unit in enumerate(units):
+        size = float(kbytes) / (base**i)
+        if unit != units[-1] and size >= 1000:
+            continue
+
+        decimal_precision = 0
+        for i in range(significant_digits):
+            if (int(size) / (10**i)) == 0:
+                decimal_precision = significant_digits - i
+                break
+
+        return (decimal_precision, size, unit)
+
+def get_usage(ids, userorgroup, mountpt, obd_uuid):
+    usage = {}
+    for ident, name in ids.items():
+        command = ['lfs', 'quota', '-q']
+        if obd_uuid:
+            command += ['-o', obd_uuid]
+        if userorgroup == 'user':
+            command += ['-u']
+        elif userorgroup == 'group':
+            command += ['-g']
+        command += [str(ident)]
+        command += [mountpt]
+        lfs = Popen(command, stdout=PIPE, stderr=PIPE)
+        stdout, stderr = lfs.communicate()
+        for line in stdout.split('\n'):
+            line.strip()
+            if not line:
+                continue
+
+            args = line.split()
+            if obd_uuid:
+                # Add leading filesystem name, lfs does not have this field
+                # when the -o option is specified...stupid lfs...
+                args = [mountpt] + args
+
+            kbytes = args[1]
+            #print name, kbytes
+            if try_int(kbytes) == 0:
+                continue
+
+            # put quota stats in the dictionary, and convert each field
+            # to an integer at the same time
+            usage[name] = [try_int(x) for x in args]
+    return usage
+
+def get_ids_from_directory(directory, userorgroup):
+    """Get the uids or gids of the subdirectories in directory"""
+
+    subdirs = os.listdir(directory)
+
+    ids = {}
+    for subdir in subdirs:
+        path = os.path.join(directory, subdir)
+        if not os.path.isdir(path):
+            continue
+        st = os.stat(path)
+        
+        if (userorgroup == 'user'):
+            ident = st.st_uid
+        elif (userorgroup == 'group'):
+            ident = st.st_gid
+        else:
+            raise 'Unsupported userorgroup type'
+
+        ids[ident] = subdir
+    return ids
+
+def get_ids_from_etc(userorgroup):
+    if (userorgroup == 'user'):
+        import pwd
+        ids_list = [(pw.pw_uid, pw.pw_name) for pw in pwd.getpwall()]
+    elif (userorgroup == 'group'):
+        import grp
+        ids_list = [(gr.gr_gid, gr.gr_name) for gr in grp.getgrall()]
+    else:
+        raise 'Unsupported userorgroup type'
+
+    ids = dict(ids_list)
+    return ids
+
+def main():
+    usage = "usage: %prog [options] <lustre mount point>"
+    parser = optparse.OptionParser(usage=usage)
+    parser.add_option('-s', action='store_true', dest='sort_by_space',
+                      help='Sort output by space used (default)')
+    parser.add_option('-f', action='store_false', dest='sort_by_space',
+                      help='Sort output by number of files used')
+    parser.add_option('-o', metavar='obd_uuid', dest='obd_uuid',
+                      help='Show usage for a single obd_uuid')
+    parser.add_option('-u', action='store_const', const='user', dest='userorgroup',
+                      help='Report on usage by user (default)')
+    parser.add_option('-g', action='store_const', const='group', dest='userorgroup',
+                      help='Report on usage by group')
+    parser.add_option('-d', action='store_true', dest='dirscan', default=False,
+                      help='Report on users/groups owning the top-level directories in the target filesystem. (default)')
+    parser.add_option('-e', action='store_true', dest='etcscan', default=False,
+                      help='Report on users or groups in /etc/passwd or /etc/groups, respectively. (Can be specified together with -d.  Lists are merged.)')
+    parser.add_option('-M', action='store_true', dest='machine',
+                      help='Machine readable output (no units, no header...)')
+    parser.add_option('-q', action='store_true', dest='quiet',
+                      help='Quiet (Suppress header output)')
+
+    parser.set_defaults(sort_by_space=True)
+    parser.set_defaults(quiet=False)
+    parser.set_defaults(machine=False)
+    parser.set_defaults(userorgroup='user')
+    (opts, args) = parser.parse_args()
+
+    if not opts.dirscan and not opts.etcscan:
+        # dirscan is default if neither is specified
+        opts.dirscan = True
+
+    if len(args) != 1:
+        parser.print_help()
+        sys.exit(1)
+
+    mountpt = args[0]
+
+    ids = {}
+    if opts.dirscan:
+        ids.update(get_ids_from_directory(mountpt, opts.userorgroup))
+    if opts.etcscan:
+        ids.update(get_ids_from_etc(opts.userorgroup))
+
+    usage = get_usage(ids, opts.userorgroup, mountpt, opts.obd_uuid)
+    usage_list = [ [x[0]] + x[1] for x in usage.items()]
+
+    # first sort by user/group name
+    usage_list.sort(key=operator.itemgetter(0))
+    usage_list.reverse() # change to Z-A so that it will be A-Z with the NEXT reverse
+
+    # sort the list again by space or file count
+    if opts.sort_by_space:
+        column = 2
+    else: # sort by file count
+        column = 6
+    usage_list.sort(key=operator.itemgetter(column))
+    # highest usage first
+    usage_list.reverse()
+
+    if not opts.quiet and not opts.machine:
+        if opts.userorgroup == 'user':
+            name = 'User'
+        else:
+            name = 'Group'
+        sys.stdout.write('%-15s %-12s %-12s\n' % (name, 'Space-used', 'Files-used'))
+    try:
+        sys.stdout.flush()
+    except:
+        return 0
+    for entry in usage_list:
+        username = entry[0]
+        kbytes = entry[2]
+        files = entry[6]
+
+        if not opts.machine:
+            size = '%.*f %s' % shorten_size(kbytes, 3)
+        else:
+            size = str(kbytes)
+
+        sys.stdout.write('%-15s %-12s %-12s\n' % (username, size, str(files)))
+        try:
+            sys.stdout.flush()
+        except:
+            return 0
+
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main())
