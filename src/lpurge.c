@@ -62,7 +62,6 @@
 #include <sys/time.h>
 #include <time.h>
 
-#include <lustre/liblustreapi.h>
 #include <lustre/lustre_user.h>
 
 struct elist_struct {
