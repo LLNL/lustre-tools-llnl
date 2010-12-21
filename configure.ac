@@ -17,6 +17,9 @@ AM_MAINTAINER_MODE
 # Checks for programs.
 AC_PROG_CC
 
+# Check for headers
+AC_CHECK_HEADERS([lustre/lustre_user.h])
+
 AC_CONFIG_FILES([Makefile
                  doc/Makefile
                  doc/man/Makefile
