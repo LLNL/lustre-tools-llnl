@@ -542,6 +542,8 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
         off_t sz;
         uid_t uid;
         unsigned long long inode_count = 0, i;
+        struct stat s;
+        int is_dir;
 
         if (elist_find(elist, path))
                 return 0;
@@ -554,7 +556,23 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                         continue;
                 inode_count++;
                 fqp = pathcat(path, dp->d_name);
-                if (dp->d_type == DT_DIR) { /* will not follow symlinks */
+
+                /* will not follow symlinks */
+                if (dp->d_type == DT_DIR) {
+                        is_dir = 1;
+                } else if (dp->d_type == DT_UNKNOWN) {
+                        if (stat(fqp, &s) != 0) {
+                                fprintf(stderr, "%s: could not stat %s\n",
+                                        prog, fqp);
+                                return 0;
+                        }
+
+                        is_dir = S_ISDIR(s.st_mode);
+                } else {
+                        is_dir = 0;
+                }
+
+                if (is_dir) {
                         i = purge(fqp, thresh, elist, outf, NULL,
                                   Ropt, sopt, lustre);
                         inode_count += i;
