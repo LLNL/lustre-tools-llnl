@@ -5,7 +5,7 @@ Release: See META file
 License: GPL
 Group: System Environment/Base
 #URL: 
-Packager: Christopher J. Morrone <morrone2@llnl.gov
+Packager: Christopher J. Morrone <morrone2@llnl.gov>
 Source0: %{name}-%{version}.tar.gz
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
 BuildRequires: lustre
