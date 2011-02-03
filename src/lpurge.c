@@ -45,6 +45,7 @@
 #define HAVE_GETOPT_LONG 1
 #include <sys/time.h>
 #include <time.h>
+#include <signal.h>
 
 #include <lustre/lustre_user.h>
 
@@ -81,6 +82,8 @@ static unsigned long long elig_files = 0;
 static unsigned long long elig_bytes = 0;
 
 static char *prog;
+
+unsigned interrupted = 0;
 
 #define OPTIONS "d:o:i:x:X:Rs"
 #if HAVE_GETOPT_LONG
@@ -121,6 +124,18 @@ usage(void)
  "  Same as above but exclude joey directory\n"
  "    lpurge -R -d 90 -o /tmp/purge.log -x /mnt/lustre/joey /mnt/lustre\n");
         exit(1);
+}
+
+/*
+ * Set a flag on first interrupt, exit on second.
+ */
+static void
+sig_int(int signo)
+{
+        if (!interrupted)
+                interrupted = 1;
+        else
+                exit(1);
 }
 
 int
@@ -216,6 +231,9 @@ main(int argc, char *argv[])
                         prog, purgepath);
                 exit(1);
         }
+
+        if (signal(SIGINT, sig_int) == SIG_ERR)
+                fprintf(stderr, "can't catch SIGINT\n");
 
         /* activate optimization if Lustre */
         if (is_lustre_fs(purgepath))
@@ -531,7 +549,7 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                 fprintf(stderr, "%s: could not open %s\n", prog, path);
                 return 0;
         }
-        while ((dp = readdir(dir))) {
+        while ((dp = readdir(dir)) && !interrupted) {
                 if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, ".."))
                         continue;
                 inode_count++;
