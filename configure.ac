@@ -13,7 +13,7 @@ AC_CANONICAL_SYSTEM
 case "$host_cpu" in
         i[[3456]]86*)
                 # need large file support on 32-bit systems
-                AC_DEFINE(_USE_LARGEFILE64, 1)
+                AC_DEFINE([_USE_LARGEFILE64], [1], [Support large file sizes])
                 ;;
         *)
                 ;;
