@@ -16,6 +16,7 @@ case "$target_cpu" in
                 AC_DEFINE([_USE_LARGEFILE64], [1], [Support large file sizes])
                 ;;
         *)
+                echo "target_cpu is $target_cpu"
                 ;;
 esac
 
