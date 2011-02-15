@@ -10,6 +10,12 @@ AC_CONFIG_HEADER([config.h])
 AC_CANONICAL_HOST
 AC_CANONICAL_SYSTEM
 
+case "$host_cpu" in
+  i[[3456]]86*)
+        AC_DEFINE(_USE_LARGEFILE64)
+        ;;
+esac
+
 # Automake support
 AM_INIT_AUTOMAKE([$PACKAGE], [$VERSION], [check-news dist-bzip2 gnu no-define])
 AM_MAINTAINER_MODE
