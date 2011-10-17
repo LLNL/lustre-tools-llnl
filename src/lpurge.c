@@ -561,7 +561,7 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                 if (dp->d_type == DT_DIR) {
                         is_dir = 1;
                 } else if (dp->d_type == DT_UNKNOWN) {
-                        if (stat(fqp, &s) != 0) {
+                        if (lstat(fqp, &s) != 0) {
                                 fprintf(stderr, "%s: could not stat %s\n",
                                         prog, fqp);
                                 return 0;
