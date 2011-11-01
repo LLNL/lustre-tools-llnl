@@ -551,6 +551,7 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
         struct stat s;
         struct stat *s_ptr;
         int is_dir;
+        int is_sym;
 
         if (elist_find(elist, path))
                 return 0;
@@ -567,6 +568,11 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                 /* will not follow symlinks */
                 if (dp->d_type == DT_DIR) {
                         is_dir = 1;
+                        is_sym = 0;
+                        s_ptr = NULL;
+                } else if (dp->d_type == DT_LNK) {
+                        is_dir = 0;
+                        is_sym = 1;
                         s_ptr = NULL;
                 } else if (dp->d_type == DT_UNKNOWN) {
                         if (lstat(fqp, &s) != 0) {
@@ -576,9 +582,11 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                         }
 
                         is_dir = S_ISDIR(s.st_mode);
+                        is_sym = S_ISLNK(s.st_mode);
                         s_ptr = &s;
                 } else {
                         is_dir = 0;
+                        is_sym = 0;
                         s_ptr = NULL;
                 }
 
@@ -588,7 +596,7 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                         inode_count += i;
                         if (tallyf)
                                 fprintf(tallyf, "%9llu %s\n", i, fqp);
-                } else if (thresh > 0) {
+                } else if (!is_sym && thresh > 0) {
                         if (purgeable(dirfd(dir), dp->d_name, fqp, thresh,
                                       sopt, lustre, &t, &d, &sz, &uid, s_ptr)) {
                                 elig_bytes += sz;
