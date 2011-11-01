@@ -486,7 +486,8 @@ maxtime(struct stat *sb, char *dp)
  */
 static int
 purgeable(int dfd, char *name, char *path, time_t thresh, int sopt,
-          int lustre, time_t *tp, char *dp, off_t *sp, uid_t *up)
+          int lustre, time_t *tp, char *dp, off_t *sp, uid_t *up,
+          struct stat *s)
 {
         struct stat sb1, sb2;
         time_t t;
@@ -499,18 +500,23 @@ purgeable(int dfd, char *name, char *path, time_t thresh, int sopt,
                 else if (maxtime(&sb1, NULL) > thresh)
                         return 0;
         }
-        if (lstat(path, &sb2) < 0)
-                return 0;
+
+        if (s == NULL) {
+                if (lstat(path, &sb2) < 0)
+                        return 0;
+                s = &sb2;
+        }
+
         if (lres < 0)
                 fprintf(stderr, "ioctl(IOC_MDC_GETFILEINFO): %s: %s\n",
                         path, strerror(saved_errno));
-        if ((t = maxtime(&sb2, &d)) > thresh)
+        if ((t = maxtime(s, &d)) > thresh)
                 return 0;
 
         *tp = t;
         *dp = d;
-        *sp = sb2.st_size;
-        *up = sb2.st_uid;
+        *sp = s->st_size;
+        *up = s->st_uid;
         return 1;
 }
 
@@ -543,7 +549,9 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
         uid_t uid;
         unsigned long long inode_count = 0, i;
         struct stat s;
+        struct stat *s_ptr;
         int is_dir;
+        int is_sym;
 
         if (elist_find(elist, path))
                 return 0;
@@ -560,6 +568,12 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                 /* will not follow symlinks */
                 if (dp->d_type == DT_DIR) {
                         is_dir = 1;
+                        is_sym = 0;
+                        s_ptr = NULL;
+                } else if (dp->d_type == DT_LNK) {
+                        is_dir = 0;
+                        is_sym = 1;
+                        s_ptr = NULL;
                 } else if (dp->d_type == DT_UNKNOWN) {
                         if (lstat(fqp, &s) != 0) {
                                 fprintf(stderr, "%s: could not stat %s\n",
@@ -568,8 +582,12 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                         }
 
                         is_dir = S_ISDIR(s.st_mode);
+                        is_sym = S_ISLNK(s.st_mode);
+                        s_ptr = &s;
                 } else {
                         is_dir = 0;
+                        is_sym = 0;
+                        s_ptr = NULL;
                 }
 
                 if (is_dir) {
@@ -578,9 +596,9 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                         inode_count += i;
                         if (tallyf)
                                 fprintf(tallyf, "%9llu %s\n", i, fqp);
-                } else if (thresh > 0) {
+                } else if (!is_sym && thresh > 0) {
                         if (purgeable(dirfd(dir), dp->d_name, fqp, thresh,
-                                      sopt, lustre, &t, &d, &sz, &uid)) {
+                                      sopt, lustre, &t, &d, &sz, &uid, s_ptr)) {
                                 elig_bytes += sz;
                                 elig_files++;
                                 /* report: {a|c|m} {date} {size} {uid} {path} */
