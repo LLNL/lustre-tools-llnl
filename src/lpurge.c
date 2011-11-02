@@ -543,7 +543,7 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
         uid_t uid;
         unsigned long long inode_count = 0, i;
         struct stat s;
-        int is_dir;
+        int type;
 
         if (elist_find(elist, path))
                 return 0;
@@ -557,28 +557,25 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                 inode_count++;
                 fqp = pathcat(path, dp->d_name);
 
-                /* will not follow symlinks */
-                if (dp->d_type == DT_DIR) {
-                        is_dir = 1;
-                } else if (dp->d_type == DT_UNKNOWN) {
+                /* fall back to lstat() if file type cannot be determined */
+                type = dp->d_type;
+                if (type == DT_UNKNOWN) {
                         if (lstat(fqp, &s) != 0) {
                                 fprintf(stderr, "%s: could not stat %s\n",
                                         prog, fqp);
-                                return 0;
+                                free(fqp);
+                                break;
                         }
-
-                        is_dir = S_ISDIR(s.st_mode);
-                } else {
-                        is_dir = 0;
+                        type = IFTODT(s.st_mode);
                 }
 
-                if (is_dir) {
+                if (type == DT_DIR) {
                         i = purge(fqp, thresh, elist, outf, NULL,
                                   Ropt, sopt, lustre);
                         inode_count += i;
                         if (tallyf)
                                 fprintf(tallyf, "%9llu %s\n", i, fqp);
-                } else if (thresh > 0) {
+                } else if (type == DT_REG && thresh > 0) {
                         if (purgeable(dirfd(dir), dp->d_name, fqp, thresh,
                                       sopt, lustre, &t, &d, &sz, &uid)) {
                                 elig_bytes += sz;
