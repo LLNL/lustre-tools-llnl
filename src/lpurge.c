@@ -486,31 +486,38 @@ maxtime(struct stat *sb, char *dp)
  */
 static int
 purgeable(int dfd, char *name, char *path, time_t thresh, int sopt,
-          int lustre, time_t *tp, char *dp, off_t *sp, uid_t *up)
+          int lustre, time_t *tp, char *dp, off_t *sp, uid_t *up,
+          struct stat *s_cached)
 {
-        struct stat sb1, sb2;
+        struct stat sb, *s_ptr;
         time_t t;
         char d;
         int saved_errno = 0, lres = 0;
 
-        if (!sopt && lustre) {
-                if ((lres = llapi_stat_mds(dfd, name, &sb1)) < 0)
-                        saved_errno = errno;
-                else if (maxtime(&sb1, NULL) > thresh)
+        if (s_cached == NULL) {
+                if (!sopt && lustre) {
+                        if ((lres = llapi_stat_mds(dfd, name, &sb)) < 0)
+                                saved_errno = errno;
+                        else if (maxtime(&sb, NULL) > thresh)
+                                return 0;
+                }
+                if (lstat(path, &sb) < 0)
                         return 0;
+                if (lres < 0)
+                        fprintf(stderr, "ioctl(IOC_MDC_GETFILEINFO): %s: %s\n",
+                                path, strerror(saved_errno));
+                s_ptr = &sb;
+        } else {
+                s_ptr = s_cached;
         }
-        if (lstat(path, &sb2) < 0)
-                return 0;
-        if (lres < 0)
-                fprintf(stderr, "ioctl(IOC_MDC_GETFILEINFO): %s: %s\n",
-                        path, strerror(saved_errno));
-        if ((t = maxtime(&sb2, &d)) > thresh)
+
+        if ((t = maxtime(s_ptr, &d)) > thresh)
                 return 0;
 
         *tp = t;
         *dp = d;
-        *sp = sb2.st_size;
-        *up = sb2.st_uid;
+        *sp = s_ptr->st_size;
+        *up = s_ptr->st_uid;
         return 1;
 }
 
@@ -542,7 +549,7 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
         off_t sz;
         uid_t uid;
         unsigned long long inode_count = 0, i;
-        struct stat s;
+        struct stat s, *s_ptr;
         int type;
 
         if (elist_find(elist, path))
@@ -559,6 +566,7 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
 
                 /* fall back to lstat() if file type cannot be determined */
                 type = dp->d_type;
+                s_ptr = NULL;
                 if (type == DT_UNKNOWN) {
                         if (lstat(fqp, &s) != 0) {
                                 fprintf(stderr, "%s: could not stat %s\n",
@@ -567,6 +575,7 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                                 break;
                         }
                         type = IFTODT(s.st_mode);
+                        s_ptr = &s;
                 }
 
                 if (type == DT_DIR) {
@@ -577,7 +586,7 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                                 fprintf(tallyf, "%9llu %s\n", i, fqp);
                 } else if (type == DT_REG && thresh > 0) {
                         if (purgeable(dirfd(dir), dp->d_name, fqp, thresh,
-                                      sopt, lustre, &t, &d, &sz, &uid)) {
+                                      sopt, lustre, &t, &d, &sz, &uid, s_ptr)) {
                                 elig_bytes += sz;
                                 elig_files++;
                                 /* report: {a|c|m} {date} {size} {uid} {path} */
