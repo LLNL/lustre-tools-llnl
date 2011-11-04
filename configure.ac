@@ -21,7 +21,8 @@ AM_MAINTAINER_MODE
 AC_PROG_CC
 
 # Check for headers
-AC_CHECK_HEADERS([lustre/lustre_user.h])
+AC_CHECK_HEADERS([lustre/lustre_user.h], [],
+        [AC_MSG_ERROR([lustre header not found])])
 
 AC_CONFIG_FILES([Makefile
                  doc/Makefile
