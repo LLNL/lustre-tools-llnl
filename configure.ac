@@ -12,6 +12,14 @@ AC_CANONICAL_SYSTEM
 
 # Check for system capabilities
 AC_SYS_LARGEFILE
+case "$target_cpu" in
+        i[[3456]]86*)
+                # need large file support on 32-bit systems
+                AC_DEFINE([_LARGEFILE64_SOURCE], [1], [Support large file sizes])
+                ;;
+        *)
+                ;;
+esac
 
 # Automake support
 AM_INIT_AUTOMAKE([$PACKAGE], [$VERSION], [check-news dist-bzip2 gnu no-define])
