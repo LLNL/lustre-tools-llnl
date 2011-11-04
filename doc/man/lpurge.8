@@ -6,11 +6,11 @@ lpurge \- lustre purge utility
 .br
 .SH DESCRIPTION
 .B lpurge
-recursively descends \fIdirectory\fR, generating a list of files that
+recursively descends \fIdirectory\fR, generating a list of regular files that
 have not been used in a specified number of days.  The time of last use is
 defined as the greatest of atime, mtime, or ctime.
 Files can optionally be removed as the list is generated.
-All types of files are considered for eligibility except directories.
+By default, only regular files are considered for eligibility.
 Symbolic links are not followed in directory traversal or file removal.
 .LP
 Although \fBlpurge\fR works with any file system, it activates an
