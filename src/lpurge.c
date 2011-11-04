@@ -564,7 +564,8 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                         if (lstat(fqp, &s) != 0) {
                                 fprintf(stderr, "%s: could not stat %s\n",
                                         prog, fqp);
-                                return 0;
+                                free(fqp);
+                                break;
                         }
 
                         is_dir = S_ISDIR(s.st_mode);
