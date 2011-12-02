@@ -27,6 +27,8 @@ import os
 import re
 import sys
 import subprocess
+import signal
+import errno
 
 colors =  { 'default'       :    "\033[0m",
             'bold'          :    "\033[1m",
@@ -119,7 +121,7 @@ def main():
         pager = None
         pass
     elif options.pager:
-        pager = subprocess.Popen(['less', '-XRS'], stdin=subprocess.PIPE)
+        pager = subprocess.Popen(['less', '-KXRS'], stdin=subprocess.PIPE)
         output = pager.stdin
     else:
         pager = None
@@ -128,34 +130,45 @@ def main():
     # Loop over all of the lines in the log
     thread_color = {}
     thread_file = {}
-    for line in fileinput.input(files=args):
-        result = pattern.match(line)
-        if not result:
-            output.write(line)
-            continue
+    try:
+        for line in fileinput.input(files=args):
+            result = pattern.match(line)
+            if not result:
+                output.write(line)
+                continue
 
-        tid = result.group('threadid')
-        ts = result.group('timestamp')
+            tid = result.group('threadid')
+            ts = result.group('timestamp')
 
-        if tid not in thread_color:
-            if not options.color:
-                thread_color[tid] = ''
-            elif tid == options.thread:
-                thread_color[tid] = colors['black'] + colors['on_cyan']
+            if tid not in thread_color:
+                if not options.color:
+                    thread_color[tid] = ''
+                elif tid == options.thread:
+                    thread_color[tid] = colors['black'] + colors['on_cyan']
+                else:
+                    thread_color[tid] = next_ansi_color()
+                if options.split:
+                    thread_file[tid] = open(os.path.join(split_dir, tid), 'w')
+
+            if options.date:
+                ts = str(datetime.datetime.fromtimestamp(float(ts)))
+                line = thread_color[tid] + ts + ' ' + result.group('begin') + result.group('middle') + tid + result.group('end') + '\n'
             else:
-                thread_color[tid] = next_ansi_color()
+                line = thread_color[tid] + result.group('begin') + ts + result.group('middle') + tid + result.group('end') + '\n'
+
+            output.write(line)
             if options.split:
-                thread_file[tid] = open(os.path.join(split_dir, tid), 'w')
-
-        if options.date:
-            ts = str(datetime.datetime.fromtimestamp(float(ts)))
-            line = thread_color[tid] + ts + ' ' + result.group('begin') + result.group('middle') + tid + result.group('end') + '\n'
-        else:
-            line = thread_color[tid] + result.group('begin') + ts + result.group('middle') + tid + result.group('end') + '\n'
-
-        output.write(line)
-        if options.split:
-            thread_file[tid].write(line)
+                thread_file[tid].write(line)
+    except KeyboardInterrupt:
+        if pager:
+            pager.send_signal(signal.SIGINT)
+        return 1
+    except IOError as (num, strerror):
+        if pager:
+            pager.kill()
+        if num == errno.EPIPE: # Ignore "Broken pipe", user quit less
+            return 0
+        raise
 
     if options.color:
         output.write(colors['default'])
@@ -171,8 +184,11 @@ def main():
         filenames = [os.path.join(split_dir, str(x)) for x in filenames]
         filenames = [combined] + filenames
         if options.pager:
-            pager = subprocess.Popen(['less', '-R', '--force'] + filenames)
-            pager.wait()
+            try:
+                pager = subprocess.Popen(['less', '-RK', '--force'] + filenames)
+                pager.wait()
+            except KeyboardInterrupt:
+                pager.send_signal(signal.SIGINT)
             for f in filenames:
                 os.remove(f)
             os.rmdir(split_dir)
