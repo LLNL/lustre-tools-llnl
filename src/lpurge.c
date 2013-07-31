@@ -223,7 +223,8 @@ main(int argc, char *argv[])
                 exit(1);
         }
         if (stat(purgepath, &sb) < 0) {
-                fprintf(stderr, "%s: cannot stat %s\n", prog, purgepath);
+                fprintf(stderr, "%s: cannot stat %s: %s\n", prog, purgepath,
+                        strerror(errno));
                 exit(1);
         }
         if (!S_ISDIR(sb.st_mode)) {
@@ -278,11 +279,13 @@ main(int argc, char *argv[])
 
         /* clean up */
         if (outf && fclose(outf) != 0) {
-                fprintf(stderr, "%s: error closing eligible log file\n", prog);
+                fprintf(stderr, "%s: error closing eligible log file: %s\n",
+                        prog, strerror(errno));
                 exit_val = 1;
         }
         if (tallyf && fclose(tallyf) != 0) {
-                fprintf(stderr, "%s: error closing inode-tally file\n", prog);
+                fprintf(stderr, "%s: error closing inode-tally file: %s\n",
+                        prog, strerror(errno));
                 exit_val = 1;
         }
         elist_destroy(elist);
@@ -409,8 +412,8 @@ elist_verify(struct elist_struct *elist, const char *purgepath)
                 if (!strncmp(elist->paths[i], purgepath, strlen(purgepath))) {
                         if (stat(elist->paths[i], &sb) < 0) {
                                 fprintf(stderr, "%s: cannot stat exclude"
-                                        " path: %s (aborting)\n",
-                                        prog, elist->paths[i]);
+                                        " path: %s: %s (aborting)\n",
+                                        prog, elist->paths[i], strerror(errno));
                                 exit(1);
                         }
                         if (!S_ISDIR(sb.st_mode)) {
@@ -555,7 +558,8 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
         if (elist_find(elist, path))
                 return 0;
         if (!(dir = opendir(path))) {
-                fprintf(stderr, "%s: could not open %s\n", prog, path);
+                fprintf(stderr, "%s: could not open %s: %s\n", prog, path,
+                        strerror(errno));
                 return 0;
         }
         while ((dp = readdir(dir)) && !interrupted) {
@@ -569,8 +573,8 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
                 s_ptr = NULL;
                 if (type == DT_UNKNOWN) {
                         if (lstat(fqp, &s) != 0) {
-                                fprintf(stderr, "%s: could not stat %s\n",
-                                        prog, fqp);
+                                fprintf(stderr, "%s: could not stat %s: %s\n",
+                                        prog, fqp, strerror(errno));
                                 free(fqp);
                                 break;
                         }
