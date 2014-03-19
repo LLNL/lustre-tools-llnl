@@ -613,9 +613,11 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
 static int
 llapi_stat_mds(int fd, char *fname, struct stat *sb)
 {
-        const size_t bufsize = MAX(MAXPATHLEN, sizeof(lstat_t));
+        const size_t bufsize = MAX(MAXPATHLEN,
+                                   sizeof(struct lov_user_mds_data_v3) +
+                                   sizeof(struct lov_user_ost_data_v1) * 2000);
         char buf[bufsize];
-        lstat_t *ls = (lstat_t *)buf;
+        lstat_t *ls = &((struct lov_user_mds_data *)buf)->lmd_st;
         int ret = -1;
 
         if (strlen(fname) >= bufsize) {
