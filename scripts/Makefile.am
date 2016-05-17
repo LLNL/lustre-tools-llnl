@@ -1,1 +1,1 @@
-sbin_SCRIPTS = lflush lustre_quota_summary zfsobj2fid
+dist_sbin_SCRIPTS = lflush lustre_quota_summary zfsobj2fid

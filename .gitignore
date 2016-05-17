@@ -1,0 +1,13 @@
+lustre-tools-llnl.spec
+Makefile
+Makefile.in
+config
+config.h
+config.h.in
+INSTALL
+aclocal.m4
+config.log
+config.status
+configure
+src/.deps
+stamp-h1

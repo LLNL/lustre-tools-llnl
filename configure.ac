@@ -1,8 +1,7 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT
-X_AC_META
+AC_INIT([lustre-tools-llnl], [1.8.1])
 AC_CONFIG_AUX_DIR([config])
 AC_CONFIG_SRCDIR([src/lpurge.c])
 AC_CONFIG_HEADER([config.h])
@@ -22,8 +21,17 @@ case "$target_cpu" in
 esac
 
 # Automake support
-AM_INIT_AUTOMAKE([$PACKAGE], [$VERSION], [check-news dist-bzip2 gnu no-define])
+AM_INIT_AUTOMAKE([foreign no-define])
 AM_MAINTAINER_MODE
+
+AC_MSG_CHECKING([whether to configure just enough for make dist])
+AC_ARG_ENABLE([dist],
+        AC_HELP_STRING([--enable-dist],
+                        [only configure enough for make dist]),
+        [], [enable_dist="no"])
+AC_MSG_RESULT([$enable_dist])
+
+AS_IF([test "x$enable_dist" = "xno"], [
 
 # Checks for programs.
 AC_PROG_CC
@@ -32,10 +40,14 @@ AC_PROG_CC
 AC_CHECK_HEADERS([lustre/lustre_user.h], [],
         [AC_MSG_ERROR([lustre header not found])])
 
-AC_CONFIG_FILES([Makefile
+]) dnl enable_dist
+
+AC_CONFIG_FILES([lustre-tools-llnl.spec
+                 Makefile
                  doc/Makefile
                  doc/man/Makefile
                  src/Makefile
                  scripts/Makefile])
+
 
 AC_OUTPUT
