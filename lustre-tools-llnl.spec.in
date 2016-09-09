@@ -32,6 +32,8 @@ rm -rf $RPM_BUILD_ROOT
 %doc
 %{_sbindir}/*
 %{_mandir}/*/*
+%{_prefix}/lib/ocf/resource.d/llnl/lustre
+%{_prefix}/lib/ocf/resource.d/llnl/zpool
 
 %changelog
 * Mon Dec  6 2010 Christopher J. Morrone <morrone@butters.llnl.gov> - tools-llnl

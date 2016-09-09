@@ -1,0 +1,189 @@
+#!/bin/sh
+#
+#   Resource Agent for managing ZFS zpool resources.
+#
+#   License:      GNU General Public License (GPL)
+#   (c) 2008-2010 John Doe, Jane Roe,
+
+# Initialization:
+: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
+. ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+
+zpool_meta_data() {
+    cat <<EOF
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="zpool" version="0.1">
+  <version>0.1</version>
+  <longdesc lang="en">
+This is a resource agent that manages ZFS zpools.
+  </longdesc>
+  <shortdesc lang="en">ZFS zpool resource agent</shortdesc>
+  <parameters>
+    <parameter name="pool" unique="0" required="1">
+      <longdesc lang="en">
+      Name of the ZFS pool.
+      </longdesc>
+      <shortdesc lang="en">Number of eggs</shortdesc>
+      <content type="integer"/>
+    </parameter>
+  </parameters>
+  <actions>
+    <action name="start"        timeout="60" />
+    <action name="stop"         timeout="60" />
+    <action name="monitor"      timeout="60"
+                                interval="10" depth="0" />
+    <action name="meta-data"    timeout="5" />
+    <action name="validate-all"   timeout="20" />
+  </actions>
+</resource-agent>
+EOF
+}
+
+zpool_monitor() {
+    local rc
+
+    # exit immediately if configuration is not valid
+    zpool_validate_all || exit $?
+
+    ocf_run -q -info zpool status $OCF_RESKEY_pool
+
+    # This example assumes the following exit code convention
+    # for zpool status:
+    # 0: imported
+    # any other: not imported
+    case "$?" in
+        0)
+            rc=$OCF_SUCCESS
+            ocf_log debug "ZFS pool $OCF_RESKEY_pool is imported"
+            ;;
+        *)
+            rc=$OCF_NOT_RUNNING
+            ocf_log debug "ZFS pool $OCF_RESKEY_pool is not imported"
+            ;;
+    esac
+
+    return $rc
+}
+
+zpool_validate_all() {
+    # Test for configuration errors first
+    #if ! ocf_is_decimal $OCF_RESKEY_eggs; then
+    #   ocf_log err "eggs is not numeric!"
+    #   exit $OCF_ERR_CONFIGURED
+    #fi
+
+    # Test for required binaries
+    check_binary zpool
+
+    # Check for data directory (this may be on shared storage, so
+    # disable this test during probes)
+    #if ! ocf_is_probe; then
+    #   if ! [ -d $OCF_RESKEY_datadir ]; then
+    #      ocf_log err "$OCF_RESKEY_datadir does not exist or is not a directory!"
+    #      exit $OCF_ERR_INSTALLED
+    #   fi
+    #fi
+
+    return $OCF_SUCCESS
+}
+
+
+zpool_start() {
+    # exit immediately if configuration is not valid
+    zpool_validate_all || exit $?
+
+    if zpool_monitor; then
+        ocf_log info "ZFS pool $OCF_RESKEY_pool already imported"
+        return $OCF_SUCCESS
+    fi
+
+    # actually start up the resource here (make sure to immediately
+    # exit with an $OCF_ERR_ error code if anything goes seriously
+    # wrong)
+    # Note that OCF_ERR_GENERIC is a soft error, and the resource manager
+    # may attempt to try this again on the same node.
+    ocf_run -q zpool import -f -N $OCF_RESKEY_pool || exit $OCF_ERR_GENERIC
+
+    # After the resource has been started, check whether it started up
+    # correctly. If the resource starts asynchronously, the agent may
+    # spin on the monitor function here -- if the resource does not
+    # start up within the defined timeout, the cluster manager will
+    # consider the start action failed
+    while ! zpool_monitor; do
+        ocf_log debug "ZFS pool $OCF_RESKEY_pool net yet imported"
+        sleep 1
+    done
+
+    # only return $OCF_SUCCESS if _everything_ succeeded as expected
+    return $OCF_SUCCESS
+}
+
+zpool_stop() {
+    local rc
+
+    # exit immediately if configuration is not valid
+    zpool_validate_all || exit $?
+
+    zpool_monitor
+    rc=$?
+    case "$rc" in
+        "$OCF_SUCCESS")
+            # Currently running. Normal, expected behavior.
+            ocf_log debug "ZFS pool $OCF_RESKEY_pool is currently imported"
+            ;;
+        "$OCF_NOT_RUNNING")
+            # Currently not running. Nothing to do.
+            ocf_log info "Resource is already stopped"
+            return $OCF_SUCCESS
+            ;;
+    esac
+
+    # actually shut down the resource here (make sure to immediately
+    # exit with an $OCF_ERR_ error code if anything goes seriously
+    # wrong)
+    ocf_run -q zpool export $OCF_RESKEY_pool || exit $OCF_ERR_GENERIC
+
+    # After the resource has been stopped, check whether it shut down
+    # correctly. If the resource stops asynchronously, the agent may
+    # spin on the monitor function here -- if the resource does not
+    # shut down within the defined timeout, the cluster manager will
+    # consider the stop action failed
+    while zpool_monitor; do
+        ocf_log debug "Resource has not stopped yet, waiting"
+        sleep 1
+    done
+
+    # only return $OCF_SUCCESS if _everything_ succeeded as expected
+    return $OCF_SUCCESS
+
+}
+
+# Make sure meta-data and usage always succeed
+case $__OCF_ACTION in
+meta-data)      zpool_meta_data
+                exit $OCF_SUCCESS
+                ;;
+usage|help)     zpool_usage
+                exit $OCF_SUCCESS
+                ;;
+esac
+
+# Anything other than meta-data and usage must pass validation
+zpool_validate_all || exit $?
+
+# Translate each action into the appropriate function call
+case $__OCF_ACTION in
+start)          zpool_start;;
+stop)           zpool_stop;;
+status|monitor) zpool_monitor;;
+validate-all)   ;;
+*)              zpool_usage
+                exit $OCF_ERR_UNIMPLEMENTED
+                ;;
+esac
+rc=$?
+
+# The resource agent may optionally log a debug message
+ocf_log debug "${OCF_RESOURCE_INSTANCE} $__OCF_ACTION returned $rc"
+exit $rc

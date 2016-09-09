@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+
+import fileinput
+import re
+import sys
+
+xml_prefix = """<cib crm_feature_set="3.0.7" validate-with="pacemaker-1.2" admin_epoch="1" epoch="0" num_updates="0">
+  <configuration>
+   <crm_config>
+      <cluster_property_set id="cib-bootstrap-options">
+        <nvpair id="cib-bootstrap-options-have-watchdog" name="have-watchdog" value="false"/>
+        <nvpair id="cib-bootstrap-options-dc-version" name="dc-version" value="1.1.13-10.el7_2.2-44eb2dd"/>
+        <nvpair id="cib-bootstrap-options-cluster-infrastructure" name="cluster-infrastructure" value="corosync"/>
+        <nvpair id="cib-bootstrap-options-cluster-name" name="cluster-name" value="jet"/>
+        <nvpair id="cib-bootstrap-options-stonith-enabled" name="stonith-enabled" value="false"/>
+        <nvpair id="cib-bootstrap-options-symmetric-cluster" name="symmetric-cluster" value="false"/>
+      </cluster_property_set>
+   </crm_config>
+   <nodes/>
+"""
+
+xml_resources = ""
+xml_constraints = ""
+
+xml_postfix = """  </configuration>
+  <status/>
+</cib>
+"""
+
+zpools_seen = {}
+
+def record_xml(nodes, lustre_service_name, zfs_dataset):
+    """Record Pacemaker cib xml components for a dataset in global variables
+
+    'nodes' is a list of node names in in priority order (highest to lowest)
+    Assumes that zpool names are unique accross the cluster.
+    """
+    global xml_resources
+    global xml_constraints
+    global zpools_seen
+    zpool = zfs_dataset.split('/')[0]
+    mount_point = '/mnt/lustre/'+lustre_service_name
+
+    # Multiple datasets may use the same spool, so ensure that we
+    # add each zpool resource only once.
+    if zpool in zpools_seen:
+        # Sanity check
+        if not set(zpools_seen[zpool]).issuperset(set(nodes)):
+            sys.stderr.write('zpool "'+zpool+'" already instantiated on incompatible set of nodes\n')
+            sys.exit(1)
+    elif zpool not in zpools_seen:
+        # Add zpool resource
+        zpools_seen[zpool] = nodes
+        xml_resources += \
+'''      <primitive id="'''+zpool+'''" class="ocf" type="zpool" provider="llnl">
+        <instance_attributes id="'''+zpool+'''_attributes">
+          <nvpair id="'''+zpool+'''_arg1" name="pool" value="'''+zpool+'''"/>
+        </instance_attributes>
+        <operations>
+          <op id="'''+zpool+'''-startup" name="monitor" interval="0" timeout="2min"/>
+          <op id="'''+zpool+'''-start" name="start" interval="0" timeout="5min"/>
+          <op id="'''+zpool+'''-stop" name="stop" interval="0" timeout="5min"/>
+        </operations>
+      </primitive>
+'''
+        # Add zpool resource location constraint
+        score = len(nodes) * 10
+        for node in nodes:
+            xml_constraints += \
+'      <rsc_location id="'+zpool+'_loc_'+str(score)+'" rsc="'+zpool+'" node="'+node+'" score="'+str(score)+'"/>\n'
+            score -= 10
+
+    # Add lustre resource
+    xml_resources += \
+'''      <primitive id="'''+lustre_service_name+'''" class="ocf" type="lustre" provider="llnl">
+        <instance_attributes id="'''+lustre_service_name+'''_attributes">
+          <nvpair id="'''+lustre_service_name+'''_arg1" name="dataset" value="'''+zfs_dataset+'''"/>
+          <nvpair id="'''+lustre_service_name+'''_arg2" name="mountpoint" value="'''+mount_point+'''"/>
+        </instance_attributes>
+        <operations>
+          <op id="'''+lustre_service_name+'''-startup" name="monitor" interval="0" timeout="20s"/>
+          <op id="'''+lustre_service_name+'''-start" name="start" interval="0" timeout="7min"/>
+          <op id="'''+lustre_service_name+'''-stop" name="stop" interval="0" timeout="20min"/>
+        </operations>
+      </primitive>
+'''
+
+    # Add lustre resource location constraint
+    # (Is this really necessary?  Maybe the colocation constraint below is enough.)
+    score = len(nodes) * 10
+    for node in nodes:
+        xml_constraints += \
+'      <rsc_location id="'+lustre_service_name+'_loc_'+str(score)+'" rsc="'+lustre_service_name+'" node="'+node+'" score="'+str(score)+'"/>\n'
+        score -= 10
+
+    # Add zpool and lustre resources' ordering constraint
+    # (zpool must be imported before lustre dataset can be mounted)
+    xml_constraints += \
+'      <rsc_order id="'+lustre_service_name+'_order" first="'+zpool+'" then="'+lustre_service_name+'" kind="Mandatory"/>\n'
+
+    # Add lustre resource colocation with its underlying zpool resource
+    # (lustre dataset can only be mounted on the same node as the zpool)
+    xml_constraints += \
+'      <rsc_colocation id="'+lustre_service_name+'_colocation" rsc="'+lustre_service_name+'" with-rsc="'+zpool+'" score="INFINITY"/>\n'
+
+
+skip_pattern = re.compile('^(\s*)?(#.*)?\n?$')
+def should_skip(line):
+    """Returns true is the line contains only a comment or whitespace"""
+    if skip_pattern.match(line):
+        return True
+    return False
+
+# Assume line in ldev looks like this for zfs:
+#  jet1   jet2   lquake-MGS0000  zfs:jet1-1/mgs
+def process_line(line):
+    args = line.split()
+    if len(args) != 4:
+        sys.stderr.write('Wrong number of fields in line: '+line+'\n')
+        sys.exit(1)
+    node1, node2, lustre_service_name, zfs_dataset = args
+    nodes = [node1, node2]
+
+    if zfs_dataset[:4] != 'zfs:':
+        sys.stderr.write('Fourth field is not prefixed with "zfs:"\n')
+        sys.exit(1)
+    zfs_dataset = zfs_dataset[4:]
+
+    if 'MGS' in lustre_service_name and lustre_service_name != 'MGS':
+        sys.stderr.write('WARNING: Target name "'+lustre_service_name+'" is not valid, using "MGS" instead\n')
+        lustre_service_name = 'MGS'
+
+    record_xml(nodes, lustre_service_name, zfs_dataset)
+
+def write_pacemaker_cib_xml(f):
+    f.write(xml_prefix)
+    f.write('    <resources>\n')
+    f.write(xml_resources)
+    f.write('    </resources>\n')
+    f.write('    <constraints>\n')
+    f.write(xml_constraints)
+    f.write('    </constraints>\n')
+    f.write(xml_postfix)
+
+def main():
+    global xml_resources
+    global xml_constraints
+
+    for line in fileinput.input():
+        if should_skip(line):
+            continue
+        process_line(line)
+
+    write_pacemaker_cib_xml(sys.stdout)
+
+if __name__ == "__main__":
+    main()
