@@ -104,7 +104,7 @@ def record_xml(nodes, lustre_service_name, zfs_dataset):
 '      <rsc_colocation id="'+lustre_service_name+'_colocation" rsc="'+lustre_service_name+'" with-rsc="'+zpool+'" score="INFINITY"/>\n'
 
 
-skip_pattern = re.compile('^(\s*)?(#.*)?\n?$')
+skip_pattern = re.compile('^\s*(#.*)?\n?$')
 def should_skip(line):
     """Returns true is the line contains only a comment or whitespace"""
     if skip_pattern.match(line):
