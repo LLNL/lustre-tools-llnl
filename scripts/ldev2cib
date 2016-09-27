@@ -1,17 +1,18 @@
 #!/usr/bin/env python
 
+import argparse
 import fileinput
 import re
 import sys
 
-xml_prefix = """<cib crm_feature_set="3.0.7" validate-with="pacemaker-1.2" admin_epoch="1" epoch="0" num_updates="0">
+xml_prefix = """<cib crm_feature_set="3.0.7" validate-with="pacemaker-1.2" admin_epoch="%d" epoch="0" num_updates="0">
   <configuration>
    <crm_config>
       <cluster_property_set id="cib-bootstrap-options">
         <nvpair id="cib-bootstrap-options-have-watchdog" name="have-watchdog" value="false"/>
         <nvpair id="cib-bootstrap-options-dc-version" name="dc-version" value="1.1.13-10.el7_2.2-44eb2dd"/>
         <nvpair id="cib-bootstrap-options-cluster-infrastructure" name="cluster-infrastructure" value="corosync"/>
-        <nvpair id="cib-bootstrap-options-cluster-name" name="cluster-name" value="jet"/>
+        <nvpair id="cib-bootstrap-options-cluster-name" name="cluster-name" value="%s"/>
         <nvpair id="cib-bootstrap-options-stonith-enabled" name="stonith-enabled" value="false"/>
         <nvpair id="cib-bootstrap-options-symmetric-cluster" name="symmetric-cluster" value="false"/>
       </cluster_property_set>
@@ -29,6 +30,8 @@ xml_postfix = """  </configuration>
 
 zpools_seen = {}
 
+all_nodes = set()
+
 def record_xml(nodes, lustre_service_name, zfs_dataset):
     """Record Pacemaker cib xml components for a dataset in global variables
 
@@ -38,6 +41,9 @@ def record_xml(nodes, lustre_service_name, zfs_dataset):
     global xml_resources
     global xml_constraints
     global zpools_seen
+    global all_nodes
+
+    all_nodes |= set(nodes)
     zpool = zfs_dataset.split('/')[0]
     mount_point = '/mnt/lustre/'+lustre_service_name
 
@@ -113,7 +119,7 @@ def should_skip(line):
 
 # Assume line in ldev looks like this for zfs:
 #  jet1   jet2   lquake-MGS0000  zfs:jet1-1/mgs
-def process_line(line):
+def process_ldev_line(line):
     args = line.split()
     if len(args) != 4:
         sys.stderr.write('Wrong number of fields in line: '+line+'\n')
@@ -132,8 +138,19 @@ def process_line(line):
 
     record_xml(nodes, lustre_service_name, zfs_dataset)
 
-def write_pacemaker_cib_xml(f):
-    f.write(xml_prefix)
+def deduce_cluster_name():
+    """Deduce the name of the cluster from the name of one node.
+
+    Strip the trailing digits off the end of the node name, and that probably
+    gives us the name of the cluster.  At least at LLNL."""
+    global all_nodes
+
+    node = list(all_nodes)[0]
+
+    return node.rstrip('0123456789')
+
+def write_pacemaker_cib_xml(f, admin_epoch, cluster_name):
+    f.write(xml_prefix % (admin_epoch, cluster_name))
     f.write('    <resources>\n')
     f.write(xml_resources)
     f.write('    </resources>\n')
@@ -143,15 +160,29 @@ def write_pacemaker_cib_xml(f):
     f.write(xml_postfix)
 
 def main():
-    global xml_resources
-    global xml_constraints
+    parser = argparse.ArgumentParser(description='Input an ldev.conf file to generate the complimentary Pacemaker cib.xml file.')
+    parser.add_argument('infile', nargs='?', type=argparse.FileType('r'),
+                        default=sys.stdin,
+                        help='ldev.conf file name (default=stdin)')
+    parser.add_argument('outfile', nargs='?', type=argparse.FileType('w'),
+                        default=sys.stdout,
+                        help='Pacemaker cib.xml filename (default=stdout)')
+    parser.add_argument('--admin-epoch', type=int, default='1')
+    parser.add_argument('--cluster-name', help='Must match corosync "cluster_name" (by default guessed from a random hostname in infile)')
 
-    for line in fileinput.input():
+    args = parser.parse_args()
+
+    for line in args.infile:
         if should_skip(line):
             continue
-        process_line(line)
+        process_ldev_line(line)
 
-    write_pacemaker_cib_xml(sys.stdout)
+    if args.cluster_name is None:
+        cluster_name = deduce_cluster_name()
+    else:
+        cluster_name = args.cluster_name
+
+    write_pacemaker_cib_xml(args.outfile, args.admin_epoch, cluster_name)
 
 if __name__ == "__main__":
     main()
