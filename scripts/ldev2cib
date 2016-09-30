@@ -6,6 +6,14 @@ import re
 import sys
 
 xml_prefix = """<cib crm_feature_set="3.0.7" validate-with="pacemaker-1.2" admin_epoch="%d" epoch="0" num_updates="0">
+  <!--
+  ###########################################################################
+  # $URL$
+  # $Author$
+  # $Date$
+  # $Rev$
+  ###########################################################################
+  -->
   <configuration>
    <crm_config>
       <cluster_property_set id="cib-bootstrap-options">
