@@ -21,7 +21,7 @@ xml_prefix = """<cib crm_feature_set="3.0.7" validate-with="pacemaker-1.2" admin
         <nvpair id="cib-bootstrap-options-dc-version" name="dc-version" value="1.1.13-10.el7_2.2-44eb2dd"/>
         <nvpair id="cib-bootstrap-options-cluster-infrastructure" name="cluster-infrastructure" value="corosync"/>
         <nvpair id="cib-bootstrap-options-cluster-name" name="cluster-name" value="%s"/>
-        <nvpair id="cib-bootstrap-options-stonith-enabled" name="stonith-enabled" value="false"/>
+        <nvpair id="cib-bootstrap-options-stonith-enabled" name="stonith-enabled" value="true"/>
         <nvpair id="cib-bootstrap-options-symmetric-cluster" name="symmetric-cluster" value="false"/>
       </cluster_property_set>
    </crm_config>
@@ -30,6 +30,22 @@ xml_prefix = """<cib crm_feature_set="3.0.7" validate-with="pacemaker-1.2" admin
 
 xml_resources = ""
 xml_constraints = ""
+
+xml_fencing_resource = \
+"""      <primitive class="stonith" id="fence_pm" type="fence_powerman">
+        <instance_attributes id="fence_pm-instance_attributes">
+          <nvpair id="fence_pm-instance_attributes-hostcheck" name="pcmk_host_check" value="static-list"/>
+          <nvpair id="fence_pm-instance_attributes-hostlist" name="pcmk_host_list" value="%s"/>
+          <nvpair id="fence_pm-instance_attributes-debug" name="debug" value="/tmp/fence_pm.debug"/>
+          <nvpair id="fence_pm-instance_attributes-verbose" name="verbose" value="1"/>
+          <nvpair id="fence_pm-instance_attributes-ipaddr" name="ipaddr" value="%s"/>
+          <nvpair id="fence_pm-instance_attributes-ipport" name="ipport" value="%s"/>
+        </instance_attributes>
+        <operations>
+          <op id="fence_pm-monitor-interval-10s" interval="10s" name="monitor"/>
+        </operations>
+      </primitive>
+"""
 
 xml_postfix = """  </configuration>
   <status/>
@@ -157,13 +173,31 @@ def deduce_cluster_name():
 
     return node.rstrip('0123456789')
 
-def write_pacemaker_cib_xml(f, admin_epoch, cluster_name):
-    f.write(xml_prefix % (admin_epoch, cluster_name))
+def write_fencing_constraints(f, node_list):
+    """Write out location constraints for the fencing resource
+
+    Since the cluster is in asymmetric mode, we need to explicitly
+    add lines to allow the fencing resource to live on any of the
+    nodes on the cluster."""
+
+    for i, node in enumerate(node_list):
+        f.write('      <rsc_location id="fence_loc_'+str(i)+'" rsc="fence_pm" node="'+node+'" score="10"/>\n')
+
+def write_pacemaker_cib_xml(args):
+    global all_nodes
+
+    node_list = list(all_nodes)
+    node_list.sort()
+
+    f = args.outfile
+    f.write(xml_prefix % (args.admin_epoch, args.cluster_name))
     f.write('    <resources>\n')
+    f.write(xml_fencing_resource % (','.join(node_list), args.ipaddr, args.ipport))
     f.write(xml_resources)
     f.write('    </resources>\n')
     f.write('    <constraints>\n')
     f.write(xml_constraints)
+    write_fencing_constraints(f, node_list)
     f.write('    </constraints>\n')
     f.write(xml_postfix)
 
@@ -178,6 +212,10 @@ def main():
     parser.add_argument('--admin-epoch', type=int, default='1')
     parser.add_argument('--cluster-name',
                         help='Must match corosync "cluster_name" (by default guessed from a random hostname in infile)')
+    parser.add_argument('--ipaddr',
+                        help='Powerman server IP address (for fencing agent)')
+    parser.add_argument('--ipport', default='10101',
+                        help='Powerman server port number (for fencing agent)')
     args = parser.parse_args()
 
     for line in args.infile:
@@ -187,8 +225,10 @@ def main():
 
     if args.cluster_name is None:
         args.cluster_name = deduce_cluster_name()
+    if args.ipaddr is None:
+        args.ipaddr = 'e' + args.cluster_name + 'i'
 
-    write_pacemaker_cib_xml(args.outfile, args.admin_epoch, args.cluster_name)
+    write_pacemaker_cib_xml(args)
 
 if __name__ == "__main__":
     main()
