@@ -176,8 +176,8 @@ def main():
                         default=sys.stdout,
                         help='Pacemaker cib.xml filename (default=stdout)')
     parser.add_argument('--admin-epoch', type=int, default='1')
-    parser.add_argument('--cluster-name', help='Must match corosync "cluster_name" (by default guessed from a random hostname in infile)')
-
+    parser.add_argument('--cluster-name',
+                        help='Must match corosync "cluster_name" (by default guessed from a random hostname in infile)')
     args = parser.parse_args()
 
     for line in args.infile:
@@ -186,11 +186,9 @@ def main():
         process_ldev_line(line)
 
     if args.cluster_name is None:
-        cluster_name = deduce_cluster_name()
-    else:
-        cluster_name = args.cluster_name
+        args.cluster_name = deduce_cluster_name()
 
-    write_pacemaker_cib_xml(args.outfile, args.admin_epoch, cluster_name)
+    write_pacemaker_cib_xml(args.outfile, args.admin_epoch, args.cluster_name)
 
 if __name__ == "__main__":
     main()
