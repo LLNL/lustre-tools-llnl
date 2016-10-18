@@ -31,22 +31,6 @@ xml_prefix = """<cib crm_feature_set="3.0.7" validate-with="pacemaker-1.2" admin
 xml_resources = ""
 xml_constraints = ""
 
-xml_fencing_resource = \
-"""      <primitive class="stonith" id="fence_pm" type="fence_powerman">
-        <instance_attributes id="fence_pm-instance_attributes">
-          <nvpair id="fence_pm-instance_attributes-hostcheck" name="pcmk_host_check" value="static-list"/>
-          <nvpair id="fence_pm-instance_attributes-hostlist" name="pcmk_host_list" value="%s"/>
-          <nvpair id="fence_pm-instance_attributes-debug" name="debug" value="/tmp/fence_pm.debug"/>
-          <nvpair id="fence_pm-instance_attributes-verbose" name="verbose" value="1"/>
-          <nvpair id="fence_pm-instance_attributes-ipaddr" name="ipaddr" value="%s"/>
-          <nvpair id="fence_pm-instance_attributes-ipport" name="ipport" value="%s"/>
-        </instance_attributes>
-        <operations>
-          <op id="fence_pm-monitor-interval-10s" interval="10s" name="monitor"/>
-        </operations>
-      </primitive>
-"""
-
 xml_postfix = """  </configuration>
   <status/>
 </cib>
@@ -173,7 +157,24 @@ def deduce_cluster_name():
 
     return node.rstrip('0123456789')
 
-def write_fencing_constraints(f, node_list):
+def write_xml_fencing_resource(f, args, node_list):
+    f.write('      <primitive class="stonith" id="fence_pm" type="fence_powerman">\n')
+    f.write('        <instance_attributes id="fence_pm-instance_attributes">\n')
+    if args.fence_static_list:
+        nodes_str = ','.join(node_list)
+        f.write('          <nvpair id="fence_pm-instance_attributes-hostcheck" name="pcmk_host_check" value="static-list"/>\n')
+        f.write('          <nvpair id="fence_pm-instance_attributes-hostlist" name="pcmk_host_list" value="'+nodes_str+'"/>\n')
+    f.write('          <nvpair id="fence_pm-instance_attributes-debug" name="debug" value="/tmp/fence_pm.debug"/>\n')
+    f.write('          <nvpair id="fence_pm-instance_attributes-verbose" name="verbose" value="1"/>\n')
+    f.write('          <nvpair id="fence_pm-instance_attributes-ipaddr" name="ipaddr" value="'+args.fence_ipaddr+'"/>\n')
+    f.write('          <nvpair id="fence_pm-instance_attributes-ipport" name="ipport" value="'+args.fence_ipport+'"/>\n')
+    f.write('        </instance_attributes>\n')
+    f.write('        <operations>\n')
+    f.write('          <op id="fence_pm-monitor-interval-10s" interval="10s" name="monitor"/>\n')
+    f.write('        </operations>\n')
+    f.write('      </primitive>\n')
+
+def write_xml_fencing_constraints(f, node_list):
     """Write out location constraints for the fencing resource
 
     Since the cluster is in asymmetric mode, we need to explicitly
@@ -192,12 +193,12 @@ def write_pacemaker_cib_xml(args):
     f = args.outfile
     f.write(xml_prefix % (args.admin_epoch, args.cluster_name))
     f.write('    <resources>\n')
-    f.write(xml_fencing_resource % (','.join(node_list), args.ipaddr, args.ipport))
+    write_xml_fencing_resource(f, args, node_list)
     f.write(xml_resources)
     f.write('    </resources>\n')
     f.write('    <constraints>\n')
     f.write(xml_constraints)
-    write_fencing_constraints(f, node_list)
+    write_xml_fencing_constraints(f, node_list)
     f.write('    </constraints>\n')
     f.write(xml_postfix)
 
@@ -212,10 +213,12 @@ def main():
     parser.add_argument('--admin-epoch', type=int, default='1')
     parser.add_argument('--cluster-name',
                         help='Must match corosync "cluster_name" (by default guessed from a random hostname in infile)')
-    parser.add_argument('--ipaddr',
-                        help='Powerman server IP address (for fencing agent)')
-    parser.add_argument('--ipport', default='10101',
-                        help='Powerman server port number (for fencing agent)')
+    parser.add_argument('--fence-ipaddr',
+                        help='Powerman server IP address (for fence_powerman)')
+    parser.add_argument('--fence-ipport', default='10101',
+                        help='Powerman server port number (for fence_powerman)')
+    parser.add_argument('--fence-static-list', default=False, action="store_true",
+                        help='Use static host list for fence_powerman')
     args = parser.parse_args()
 
     for line in args.infile:
@@ -225,8 +228,8 @@ def main():
 
     if args.cluster_name is None:
         args.cluster_name = deduce_cluster_name()
-    if args.ipaddr is None:
-        args.ipaddr = 'e' + args.cluster_name + 'i'
+    if args.fence_ipaddr is None:
+        args.fence_ipaddr = 'e' + args.cluster_name + 'i'
 
     write_pacemaker_cib_xml(args)
 
