@@ -1,0 +1,186 @@
+#!/usr/bin/env python
+
+import argparse
+import re
+import sys
+import subprocess
+
+cmdline_args = None
+
+all_nodes = []
+all_zpools = {}
+zpool_order = []
+all_lustre_services = {}
+lustre_service_order = []
+
+skip_pattern = re.compile('^\s*(#.*)?\n?$')
+def should_skip(line):
+    """Returns true is the line contains only a comment or whitespace"""
+    if skip_pattern.match(line):
+        return True
+    return False
+
+# Assume line in ldev looks like this for zfs:
+#  jet1   jet2   lquake-MGS0000  zfs:jet1-1/mgs
+def process_ldev_line(line):
+    global all_nodes
+    global all_zpools
+    global all_lustre_services
+
+    fields = line.split()
+    if len(fields) != 4:
+        sys.stderr.write('Wrong number of fields in line: '+line+'\n')
+        sys.exit(1)
+    node1, node2, lustre_service_name, zfs_dataset = fields
+    nodes = [node1, node2]
+
+    if zfs_dataset[:4] != 'zfs:':
+        sys.stderr.write('Fourth field is not prefixed with "zfs:"\n')
+        sys.exit(1)
+    zfs_dataset = zfs_dataset[4:]
+
+    if 'MGS' in lustre_service_name and lustre_service_name != 'MGS':
+        sys.stderr.write('WARNING: Target name "'+lustre_service_name+'" is not valid, using "MGS" instead\n')
+        lustre_service_name = 'MGS'
+
+    for node in nodes:
+        if node not in all_nodes:
+            all_nodes.append(node)
+    zpool = zfs_dataset.split('/')[0]
+
+    if zpool in all_zpools:
+        # Sanity check
+        if not set(all_zpools[zpool]).issuperset(set(nodes)):
+            sys.stderr.write('zpool "'+zpool+'" already instantiated on incompatible set of nodes\n')
+            sys.exit(1)
+    elif zpool not in all_zpools:
+        # Add zpool resource
+        all_zpools[zpool] = nodes
+        zpool_order.append(zpool)
+
+    all_lustre_services[lustre_service_name] = (zpool, zfs_dataset)
+    lustre_service_order.append(lustre_service_name)
+
+def deduce_cluster_name():
+    """Deduce the name of the cluster from the name of one node.
+
+    Strip the trailing digits off the end of the node name, and that probably
+    gives us the name of the cluster.  At least at LLNL."""
+    global all_nodes
+
+    node = all_nodes[0]
+
+    return node.rstrip('0123456789')
+
+def run(cmd):
+    print cmd
+
+    if cmdline_args.dry_run:
+        return
+
+    try:
+        rc = subprocess.call(cmd, shell=True)
+        if rc < 0:
+            print >>sys.stderr, "Child was terminated by signal", -rc
+        elif rc > 0:
+            print >>sys.stderr, "Error: ", rc
+    except OSError as e:
+        print >>sys.stderr, "Execution failed:", e
+
+def ranked_nodes_string(nodes):
+    s = ''
+    score = len(nodes)*10
+    for node in nodes:
+        s += ' '+node+'='+str(score)
+        score -= 10
+    return s
+
+def configure():
+    cmd = 'pcs property set symmetric-cluster=false'
+    run(cmd)
+    cmd = 'pcs property set stonith-action=poweroff'
+    run(cmd)
+    cmd = 'pcs property set batch-limit=100'
+    run(cmd)
+
+    node_str = ','.join(all_nodes)
+    cmd = 'pcs stonith create fence_pm fence_powerman'
+    cmd += ' ipaddr='+cmdline_args.fence_ipaddr
+    cmd += ' ipport='+cmdline_args.fence_ipport
+    cmd += ' pcmk_host_check=static-list pcmk_host_list="'+node_str+'"'
+    run(cmd)
+
+    cmd = 'pcs constraint location fence_pm prefers'
+    cmd += ranked_nodes_string(cmdline_args.mgmt_nodes)
+    run(cmd)
+
+    for node in all_nodes:
+        cmd = 'pcs resource create '+node+' ocf:pacemaker:remote'+\
+              ' server=e'+node
+        run(cmd)
+
+        cmd = 'pcs constraint location '+node+' prefers'
+        cmd += ranked_nodes_string(cmdline_args.mgmt_nodes)
+        run(cmd)
+
+    for zpool in zpool_order:
+        cmd = 'pcs resource create '+zpool+' ocf:llnl:zpool'+\
+              ' pool='+zpool
+        run(cmd)
+
+        cmd = 'pcs constraint location '+zpool+' prefers'
+        nodes = all_zpools[zpool]
+        cmd += ranked_nodes_string(nodes)
+        run(cmd)
+
+    for service in lustre_service_order:
+        zpool=all_lustre_services[service][0]
+        dataset=all_lustre_services[service][1]
+        cmd = 'pcs resource create '+service+' ocf:llnl:lustre'+\
+              ' dataset='+dataset+' mountpoint=/mnt/lustre/'+service
+        run(cmd)
+
+        cmd = 'pcs constraint order '+zpool+' then '+service
+        run(cmd)
+
+        cmd = 'pcs constraint colocation add '+service+' with '+zpool+\
+              ' score=INFINITY'
+        run(cmd)
+
+        cmd = 'pcs constraint location '+service+' prefers'
+        nodes = all_zpools[zpool]
+        cmd += ranked_nodes_string(nodes)
+        run(cmd)
+
+def main():
+    global cmdline_args
+    parser = argparse.ArgumentParser(description='Input an ldev.conf file to generate the complimentary Pacemaker cib.xml file.')
+    parser.add_argument('mgmt_nodes',
+                        help='comma-separated list of management nodes'),
+    parser.add_argument('infile', nargs='?', type=argparse.FileType('r'),
+                        default=sys.stdin,
+                        help='ldev.conf file name (default=stdin)')
+    parser.add_argument('--cluster-name',
+                        help='Must match corosync "cluster_name" (by default guessed from a random hostname in infile)')
+    parser.add_argument('--fence-ipaddr', default='localhost',
+                        help='Powerman server IP address (for fence_powerman)')
+    parser.add_argument('--fence-ipport', default='10101',
+                        help='Powerman server port number (for fence_powerman)')
+    parser.add_argument('--dry-run', action='store_true')
+    cmdline_args = parser.parse_args()
+
+    # turn it into a list, even if there is only one node
+    cmdline_args.mgmt_nodes = cmdline_args.mgmt_nodes.split(',')
+
+    for line in cmdline_args.infile:
+        if should_skip(line):
+            continue
+        process_ldev_line(line)
+
+    if cmdline_args.cluster_name is None:
+        cmdline_args.cluster_name = deduce_cluster_name()
+
+    configure()
+
+if __name__ == "__main__":
+    main()
