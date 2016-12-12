@@ -87,21 +87,29 @@ def run(cmd):
     except OSError as e:
         print >>sys.stderr, "Execution failed:", e
 
-def ranked_nodes_string(nodes):
-    s = ''
-    score = len(nodes)*10
+def configure_location(resource, nodes, fixed_score_string=None):
+    if fixed_score_string is None:
+        score = len(nodes)*10
+    else:
+        score = fixed_score_string
     for node in nodes:
-        s += ' '+node+'='+str(score)
-        score -= 10
-    return s
+        id = resource+'_'+node
+        cmd = 'pcs constraint location add '+id+' '+resource
+        cmd += ' '+node+' '+str(score)
+        cmd += ' '+'resource-discovery=exclusive'
+        run(cmd)
+        if fixed_score_string is None:
+            score -= 10
 
 def configure():
-    cmd = 'pcs property set symmetric-cluster=false'
+    cmd = 'pcs cluster setup --force --local'
+    cmd += ' --name '+cmdline_args.cluster_name
+    cmd += ' '+cmdline_args.mgmt_node
     run(cmd)
-    cmd = 'pcs property set stonith-action=poweroff'
-    run(cmd)
-    cmd = 'pcs property set batch-limit=100'
-    run(cmd)
+    run('pcs cluster start')
+    run('pcs property set symmetric-cluster=false')
+    run('pcs property set stonith-action=off')
+    #run('pcs property set batch-limit=100')
 
     node_str = ','.join(all_nodes)
     cmd = 'pcs stonith create fence_pm fence_powerman'
@@ -109,68 +117,59 @@ def configure():
     cmd += ' ipport='+cmdline_args.fence_ipport
     cmd += ' pcmk_host_check=static-list pcmk_host_list="'+node_str+'"'
     run(cmd)
-
-    cmd = 'pcs constraint location fence_pm prefers'
-    cmd += ranked_nodes_string(cmdline_args.mgmt_nodes)
-    run(cmd)
+    run('pcs constraint location fence_pm prefers '+cmdline_args.mgmt_node)
 
     for node in all_nodes:
-        cmd = 'pcs resource create '+node+' ocf:pacemaker:remote'+\
-              ' server=e'+node
-        run(cmd)
-
-        cmd = 'pcs constraint location '+node+' prefers'
-        cmd += ranked_nodes_string(cmdline_args.mgmt_nodes)
-        run(cmd)
+        run('pcs resource create '+node+' ocf:pacemaker:remote'+' server=e'+node)
+        run('pcs constraint location '+node+' prefers '+cmdline_args.mgmt_node)
 
     for zpool in zpool_order:
-        cmd = 'pcs resource create '+zpool+' ocf:llnl:zpool'+\
-              ' pool='+zpool
-        run(cmd)
-
-        cmd = 'pcs constraint location '+zpool+' prefers'
         nodes = all_zpools[zpool]
-        cmd += ranked_nodes_string(nodes)
-        run(cmd)
+        run('pcs resource create '+zpool+' ocf:llnl:zpool pool='+zpool)
+        configure_location(zpool, nodes)
+
+    # Make sure that the MGS is the first service, so we can easily add order
+    # constraint for the MGS before all other services.
+    i = lustre_service_order.index('MGS')
+    mgs = lustre_service_order.pop(i)
+    lustre_service_order.insert(0, mgs)
 
     for service in lustre_service_order:
         zpool=all_lustre_services[service][0]
         dataset=all_lustre_services[service][1]
-        cmd = 'pcs resource create '+service+' ocf:llnl:lustre'+\
-              ' dataset='+dataset+' mountpoint=/mnt/lustre/'+service
-        run(cmd)
-
-        cmd = 'pcs constraint order '+zpool+' then '+service
-        run(cmd)
-
-        cmd = 'pcs constraint colocation add '+service+' with '+zpool+\
-              ' score=INFINITY'
-        run(cmd)
-
-        cmd = 'pcs constraint location '+service+' prefers'
         nodes = all_zpools[zpool]
-        cmd += ranked_nodes_string(nodes)
+        cmd = 'pcs resource create '+service+' ocf:llnl:lustre'
+        cmd += ' dataset='+dataset+' mountpoint=/mnt/lustre/'+service
         run(cmd)
+        if service != 'MGS':
+            run('pcs constraint order MGS then '+service+' kind=Optional')
+        run('pcs constraint order '+zpool+' then '+service)
+        cmd = 'pcs constraint colocation add '+service+' with '+zpool
+        cmd += ' score=INFINITY'
+        run(cmd)
+        configure_location(service, nodes)
 
 def main():
     global cmdline_args
     parser = argparse.ArgumentParser(description='Input an ldev.conf file to generate the complimentary Pacemaker cib.xml file.')
-    parser.add_argument('mgmt_nodes',
-                        help='comma-separated list of management nodes'),
     parser.add_argument('infile', nargs='?', type=argparse.FileType('r'),
                         default=sys.stdin,
                         help='ldev.conf file name (default=stdin)')
+    parser.add_argument('--mgmt-node',
+                        help='Hostname of management node (by default uses hostname of current node)')
     parser.add_argument('--cluster-name',
-                        help='Must match corosync "cluster_name" (by default guessed from a random hostname in infile)')
+                        help='Name of the cluster (by default guessed from a random hostname in infile)')
     parser.add_argument('--fence-ipaddr', default='localhost',
-                        help='Powerman server IP address (for fence_powerman)')
+                        help='Powerman server IP address (for fence_powerman, default localhost)')
     parser.add_argument('--fence-ipport', default='10101',
-                        help='Powerman server port number (for fence_powerman)')
+                        help='Powerman server port number (for fence_powerman, default 10101)')
     parser.add_argument('--dry-run', action='store_true')
     cmdline_args = parser.parse_args()
 
     # turn it into a list, even if there is only one node
-    cmdline_args.mgmt_nodes = cmdline_args.mgmt_nodes.split(',')
+    if cmdline_args.mgmt_node is None:
+        import socket
+        cmdline_args.mgmt_node = socket.gethostname()
 
     for line in cmdline_args.infile:
         if should_skip(line):
