@@ -109,7 +109,7 @@ def configure():
     run('pcs cluster start')
     run('pcs property set symmetric-cluster=false')
     run('pcs property set stonith-action=off')
-    #run('pcs property set batch-limit=100')
+    run('pcs property set batch-limit=100')
 
     node_str = ','.join(all_nodes)
     cmd = 'pcs stonith create fence_pm fence_powerman'
