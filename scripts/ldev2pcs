@@ -110,6 +110,7 @@ def configure():
     run('pcs property set symmetric-cluster=false')
     run('pcs property set stonith-action=off')
     run('pcs property set batch-limit=100')
+    run('pcs property set cluster-recheck-interval=60')
 
     node_str = ','.join(all_nodes)
     cmd = 'pcs stonith create fence_pm fence_powerman'
@@ -120,7 +121,8 @@ def configure():
     run('pcs constraint location fence_pm prefers '+cmdline_args.mgmt_node)
 
     for node in all_nodes:
-        run('pcs resource create '+node+' ocf:pacemaker:remote'+' server=e'+node)
+        run('pcs resource create '+node+' ocf:pacemaker:remote'+' server=e'+node+
+            ' reconnect_interval=60')
         run('pcs constraint location '+node+' prefers '+cmdline_args.mgmt_node)
 
     for zpool in zpool_order:
