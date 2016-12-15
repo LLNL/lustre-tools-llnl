@@ -126,9 +126,14 @@ def configure():
         run('pcs constraint location '+node+' prefers '+cmdline_args.mgmt_node)
 
     for zpool in zpool_order:
+        # Handle a zpool name that conflicts with a node name
+        if zpool in all_nodes:
+            zpool_resource = zpool+'_zpool'
+        else:
+            zpool_resource = zpool
         nodes = all_zpools[zpool]
-        run('pcs resource create '+zpool+' ocf:llnl:zpool pool='+zpool)
-        configure_location(zpool, nodes)
+        run('pcs resource create '+zpool_resource+' ocf:llnl:zpool pool='+zpool)
+        configure_location(zpool_resource, nodes)
 
     # Make sure that the MGS is the first service, so we can easily add order
     # constraint for the MGS before all other services.
@@ -138,6 +143,11 @@ def configure():
 
     for service in lustre_service_order:
         zpool=all_lustre_services[service][0]
+        # Handle a zpool name that conflicts with a node name
+        if zpool in all_nodes:
+            zpool_resource = zpool+'_zpool'
+        else:
+            zpool_resource = zpool
         dataset=all_lustre_services[service][1]
         nodes = all_zpools[zpool]
         cmd = 'pcs resource create '+service+' ocf:llnl:lustre'
@@ -145,8 +155,8 @@ def configure():
         run(cmd)
         if service != 'MGS':
             run('pcs constraint order MGS then '+service+' kind=Optional')
-        run('pcs constraint order '+zpool+' then '+service)
-        cmd = 'pcs constraint colocation add '+service+' with '+zpool
+        run('pcs constraint order '+zpool_resource+' then '+service)
+        cmd = 'pcs constraint colocation add '+service+' with '+zpool_resource
         cmd += ' score=INFINITY'
         run(cmd)
         configure_location(service, nodes)
