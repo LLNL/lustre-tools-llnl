@@ -132,7 +132,10 @@ def configure():
         else:
             zpool_resource = zpool
         nodes = all_zpools[zpool]
-        run('pcs resource create '+zpool_resource+' ocf:llnl:zpool pool='+zpool)
+        cmd = 'pcs resource create '+zpool_resource+' ocf:llnl:zpool'
+        cmd += ' import_options="-f -N -d /dev/disk/by-vdev"'
+        cmd += ' pool='+zpool
+        run(cmd)
         configure_location(zpool_resource, nodes)
 
     # Make sure that the MGS is the first service, so we can easily add order
