@@ -1,7 +1,7 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([lustre-tools-llnl], [1.8.6])
+AC_INIT([lustre-tools-llnl], [1.8.7])
 AC_CONFIG_AUX_DIR([config])
 AC_CONFIG_SRCDIR([src/lpurge.c])
 AC_CONFIG_HEADER([config.h])
