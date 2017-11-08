@@ -8,6 +8,7 @@
 # Initialization:
 : ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
 . ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+RESOURCE_DIR=$(dirname $0)
 
 lustre_meta_data() {
     cat <<EOF
@@ -89,6 +90,32 @@ lustre_validate_all() {
     return $OCF_SUCCESS
 }
 
+# If $hook_name file exists, run it.  Used to provide {pre,post}-{start,stop}
+# hooks.  The executables used for hooks must adhere to the OCF Resource Agent
+# Developer's guide with regards to exit codes and general behavior.
+lustre_hook() {
+    hook_name=$1
+
+    if [ "$hook_name" != "lustre_pre_start" ]   && \
+        [ "$hook_name" != "lustre_post_start" ] && \
+        [ "$hook_name" != "lustre_pre_stop" ]   && \
+        [ "$hook_name" != "lustre_post_stop" ]; then
+        exit $OCF_ERR_GENERIC
+    fi
+
+    if [ -f "$RESOURCE_DIR/$hook_name" ]; then
+        if [ -x "$RESOURCE_DIR/$hook_name" ]; then
+            ocf_log info "Executing $hook_name"
+            ocf_run $RESOURCE_DIR/$hook_name
+            return $?
+        else
+            ocf_log error "OCF $hook_name file exists but is not executable!"
+            return $OCF_ERR_PERM
+        fi
+    else
+        return $OCF_SUCCESS
+    fi
+}
 
 lustre_start() {
     # exit immediately if configuration is not valid
@@ -99,13 +126,16 @@ lustre_start() {
         return $OCF_SUCCESS
     fi
 
+    # Run the pre-start script if it exists
+    lustre_hook lustre_pre_start
+
     # actually start up the resource here (make sure to immediately
     # exit with an $OCF_ERR_ error code if anything goes seriously
     # wrong)
     # Note that OCF_ERR_GENERIC is a soft error, and the resource manager
     # may attempt to try this again on the same node.
     if [ ! -d $OCF_RESKEY_mountpoint ]; then
-	ocf_run -q mkdir -p $OCF_RESKEY_mountpoint || exit $OCF_ERR_ARGS
+        ocf_run -q mkdir -p $OCF_RESKEY_mountpoint || exit $OCF_ERR_ARGS
     fi
     ocf_run -q mount -t lustre $OCF_RESKEY_dataset $OCF_RESKEY_mountpoint || exit $OCF_ERR_GENERIC
 
@@ -119,6 +149,9 @@ lustre_start() {
         sleep 1
     done
 
+    # Run the post-start script if it exists
+    lustre_hook lustre_post_start
+
     # only return $OCF_SUCCESS if _everything_ succeeded as expected
     return $OCF_SUCCESS
 }
@@ -128,6 +161,9 @@ lustre_stop() {
 
     # exit immediately if configuration is not valid
     lustre_validate_all || exit $?
+
+    # Run the pre_stop script if it exists
+    lustre_hook lustre_pre_stop
 
     lustre_monitor
     rc=$?
@@ -158,6 +194,9 @@ lustre_stop() {
         ocf_log debug "Resource has not stopped yet, waiting"
         sleep 1
     done
+
+    # Run the post-stop script if it exists
+    lustre_hook lustre_post_stop
 
     # only return $OCF_SUCCESS if _everything_ succeeded as expected
     return $OCF_SUCCESS
