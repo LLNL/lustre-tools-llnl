@@ -102,7 +102,7 @@ def configure_location(resource, nodes, fixed_score_string=None):
             score -= 10
 
 def configure():
-    cmd = 'pcs cluster setup --force --local'
+    cmd = 'pcs cluster setup --force'
     cmd += ' --name '+cmdline_args.cluster_name
     cmd += ' '+cmdline_args.mgmt_node
     run(cmd)
