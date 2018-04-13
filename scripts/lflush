@@ -63,16 +63,19 @@ flush_locks()
     local server count
 
     pushd ${nsdir} >/dev/null || die "could not chdir to ${nsdir}"
+        waiting=""
         for server in *; do
             [ "${server}" = "*" ] && die "could not find any servers"
             if ! lock_count ${server}; then
                 [ ${vopt} = 1 ] && warn "flushing ${server}"
-                if ! echo clear >${server}/lru_size; then
-                    warn "problem flushing ${server}"
-                    retval=1
-                fi
+                echo clear >${server}/lru_size &
+                child=$!
+                waiting="$waiting $child"
             fi
-	done
+        done
+        if ! wait $waiting; then
+            warn "problem flushing one or more servers; re-run with -v"
+        fi
     popd >/dev/null
 }
 
