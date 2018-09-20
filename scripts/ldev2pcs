@@ -137,6 +137,10 @@ def configure():
         cmd += ' pool='+zpool
         cmd += ' op start timeout=805'
         run(cmd)
+
+        # We want suspended pools to immediately fail over to the other node.
+        run('pcs resource meta '+zpool_resource+' migration-threshold=1')
+
         configure_location(zpool_resource, nodes)
 
     # Make sure that the MGS is the first service, so we can easily add order

@@ -49,26 +49,33 @@ EOF
 
 zpool_monitor() {
     local rc
+    rc=$OCF_NOT_RUNNING
 
     # exit immediately if configuration is not valid
     zpool_validate_all || exit $?
 
-    ocf_run -q -info zpool status $OCF_RESKEY_pool
+    if [ -e /proc/spl/kstat/zfs/$OCF_RESKEY_pool/state ] ; then
+        # Best case, we can read the pool health locklessly from the proc file.
+        state=$(cat /proc/spl/kstat/zfs/$OCF_RESKEY_pool/state)
 
-    # This example assumes the following exit code convention
-    # for zpool status:
-    # 0: imported
-    # any other: not imported
-    case "$?" in
-        0)
+        if [ "$state" = "SUSPENDED" -o "$state" = "FAULTED" -o "$state" = "UNAVAIL" ] ; then
+            ocf_log debug "ZFS pool $OCF_RESKEY_pool is $state"
+
+            # Log zpool status to syslog for post-mortem.  Run in it the
+            # background in case zpool status hangs.  Wait 2 seconds for it to
+            # log.
+            ocf_log debug "$(zpool status)" &
+            sleep 2
+
+            rc=$OCF_ERR_GENERIC
+        else
             rc=$OCF_SUCCESS
-            ocf_log debug "ZFS pool $OCF_RESKEY_pool is imported"
-            ;;
-        *)
-            rc=$OCF_NOT_RUNNING
-            ocf_log debug "ZFS pool $OCF_RESKEY_pool is not imported"
-            ;;
-    esac
+        fi
+    elif [ -d /proc/spl/kstat/zfs/$OCF_RESKEY_pool ] ; then
+        # 2nd best case, we see a /proc entry for the pool so
+        # we at least know it's imported.
+        rc=$OCF_SUCCESS
+    fi
 
     return $rc
 }
