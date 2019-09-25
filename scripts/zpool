@@ -34,6 +34,13 @@ This is a resource agent that manages ZFS zpools.
       <shortdesc lang="en">zpool import command line options</shortdesc>
       <content type="string"/>
     </parameter>
+    <parameter name="post_import_cmd" unique="0" required="0">
+      <longdesc lang="en">
+      Command run after importing the pool. Failure results in pool export.
+      </longdesc>
+      <shortdesc lang="en">command run after pool import</shortdesc>
+      <content type="string"/>
+    </parameter>
   </parameters>
   <actions>
     <action name="start"        timeout="60" />
@@ -129,6 +136,15 @@ zpool_start() {
         ocf_log debug "ZFS pool $OCF_RESKEY_pool net yet imported"
         sleep 1
     done
+
+    if [ -n "$OCF_RESKEY_post_import_cmd" ]; then
+        ocf_run $OCF_RESKEY_post_import_cmd $OCF_RESKEY_pool
+        if [ $? -ne 0 ]; then
+            ocf_log err "FATAL ERROR: exporting ZFS pool $OCF_RESKEY_pool due to $OCF_RESKEY_post_import_cmd failure"
+            ocf_run -q zpool export $OCF_RESKEY_pool
+            exit $OCF_ERR_GENERIC
+        fi
+    fi
 
     # only return $OCF_SUCCESS if _everything_ succeeded as expected
     return $OCF_SUCCESS
