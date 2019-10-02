@@ -35,6 +35,13 @@ service (MGS, MDT, or OST).
       <shortdesc lang="en">Mount point for Lustre service</shortdesc>
       <content type="string"/>
     </parameter>
+    <parameter name="post_mount_cmd" unique="0" required="0">
+      <longdesc lang="en">
+      Command run after mounting the target. Failure results in umount.
+      </longdesc>
+      <shortdesc lang="en">command run after target mount</shortdesc>
+      <content type="string"/>
+    </parameter>
   </parameters>
   <actions>
     <action name="start"        timeout="300" />
@@ -120,6 +127,15 @@ lustre_start() {
         ocf_log debug "ZFS dataset $OCF_RESKEY_dataset not yet in use by Lustre"
         sleep 1
     done
+
+    if [ -n "$OCF_RESKEY_post_mount_cmd" ]; then
+        ocf_run -q $OCF_RESKEY_post_mount_cmd $OCF_RESKEY_dataset $OCF_RESKEY_mountpoint
+        if [ $? -ne 0 ]; then
+            ocf_log err "FATAL ERROR: umounting Lustre $OCF_RESKEY_dataset from $OCF_RESKEY_mountpoint due to $OCF_RESKEY_post_mount_cmd failure"
+            ocf_run -q umount $OCF_RESKEY_mountpoint
+            exit $OCF_ERR_GENERIC
+        fi
+    fi
 
     # only return $OCF_SUCCESS if _everything_ succeeded as expected
     return $OCF_SUCCESS
