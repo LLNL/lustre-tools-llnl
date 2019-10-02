@@ -52,8 +52,11 @@ lustre_monitor() {
     # exit immediately if configuration is not valid
     lustre_validate_all || exit $?
 
-    if [ -d /proc/fs/lustre/osd-zfs ] ; then
-    mntdevs=$(ls /proc/fs/lustre/osd-zfs/*/mntdev 2>/dev/null)
+    mntdevs=$(ls /{proc,sys}/fs/lustre/osd-zfs/*/mntdev 2>/dev/null)
+    if [ -z "${mntdevs}" ]; then
+        return $OCF_NOT_RUNNING
+    fi
+
     for mntdev_path in $mntdevs ; do
         mntdev=$(cat $mntdev_path 2>/dev/null)
         if [ $mntdev = $OCF_RESKEY_dataset ] ; then
@@ -61,7 +64,6 @@ lustre_monitor() {
         return $OCF_SUCCESS
         fi
     done
-    fi
 
     return $OCF_NOT_RUNNING
 }
