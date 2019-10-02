@@ -53,14 +53,14 @@ lustre_monitor() {
     lustre_validate_all || exit $?
 
     if [ -d /proc/fs/lustre/osd-zfs ] ; then
-	mntdevs=$(ls /proc/fs/lustre/osd-zfs/*/mntdev 2>/dev/null)
-	for mntdev_path in $mntdevs ; do
-	    mntdev=$(cat $mntdev_path 2>/dev/null)
-	    if [ $mntdev = $OCF_RESKEY_dataset ] ; then
-		ocf_log debug "$OCF_RESKEY_dataset found in $mntdev_path"
-		return $OCF_SUCCESS
-	    fi
-	done
+    mntdevs=$(ls /proc/fs/lustre/osd-zfs/*/mntdev 2>/dev/null)
+    for mntdev_path in $mntdevs ; do
+        mntdev=$(cat $mntdev_path 2>/dev/null)
+        if [ $mntdev = $OCF_RESKEY_dataset ] ; then
+        ocf_log debug "$OCF_RESKEY_dataset found in $mntdev_path"
+        return $OCF_SUCCESS
+        fi
+    done
     fi
 
     return $OCF_NOT_RUNNING
@@ -105,7 +105,7 @@ lustre_start() {
     # Note that OCF_ERR_GENERIC is a soft error, and the resource manager
     # may attempt to try this again on the same node.
     if [ ! -d $OCF_RESKEY_mountpoint ]; then
-	ocf_run -q mkdir -p $OCF_RESKEY_mountpoint || exit $OCF_ERR_ARGS
+        ocf_run -q mkdir -p $OCF_RESKEY_mountpoint || exit $OCF_ERR_ARGS
     fi
     ocf_run -q mount -t lustre $OCF_RESKEY_dataset $OCF_RESKEY_mountpoint || exit $OCF_ERR_GENERIC
 
