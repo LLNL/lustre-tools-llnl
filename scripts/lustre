@@ -61,15 +61,17 @@ lustre_monitor() {
 
     mntdevs=$(ls /{proc,sys}/fs/lustre/osd-zfs/*/mntdev 2>/dev/null)
     if [ -z "${mntdevs}" ]; then
+        ocf_log info "No mntdev found in proc or sys"
         return $OCF_NOT_RUNNING
     fi
 
     for mntdev_path in $mntdevs ; do
         mntdev=$(cat $mntdev_path 2>/dev/null)
         if [ $mntdev = $OCF_RESKEY_dataset ] ; then
-        ocf_log debug "$OCF_RESKEY_dataset found in $mntdev_path"
-        return $OCF_SUCCESS
+            ocf_log debug "$OCF_RESKEY_dataset found in $mntdev_path"
+            return $OCF_SUCCESS
         fi
+        ocf_log info "$OCF_RESKEY_dataset is not in $mntdev_path"
     done
 
     return $OCF_NOT_RUNNING

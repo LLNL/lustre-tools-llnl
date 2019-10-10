@@ -66,12 +66,12 @@ zpool_monitor() {
         state=$(cat /proc/spl/kstat/zfs/$OCF_RESKEY_pool/state)
 
         if [ "$state" = "SUSPENDED" -o "$state" = "FAULTED" -o "$state" = "UNAVAIL" ] ; then
-            ocf_log debug "ZFS pool $OCF_RESKEY_pool is $state"
+            ocf_log info "ZFS pool $OCF_RESKEY_pool is $state"
 
             # Log zpool status to syslog for post-mortem.  Run in it the
             # background in case zpool status hangs.  Wait 2 seconds for it to
             # log.
-            ocf_log debug "$(zpool status)" &
+            ocf_log info "$(zpool status)" &
             sleep 2
 
             rc=$OCF_ERR_GENERIC
@@ -79,6 +79,7 @@ zpool_monitor() {
             rc=$OCF_SUCCESS
         fi
     elif [ -d /proc/spl/kstat/zfs/$OCF_RESKEY_pool ] ; then
+        ocf_log info "$OCF_RESKEY_pool exists but no state set"
         # 2nd best case, we see a /proc entry for the pool so
         # we at least know it's imported.
         rc=$OCF_SUCCESS
