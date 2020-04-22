@@ -70,8 +70,8 @@ lustre_monitor() {
         if [ $mntdev = $OCF_RESKEY_dataset ] ; then
             ocf_log debug "$OCF_RESKEY_dataset found in $mntdev_path"
             return $OCF_SUCCESS
+        else ocf_log debug "$OCF_RESKEY_dataset does not match $mntdev"
         fi
-        ocf_log info "$OCF_RESKEY_dataset is not in $mntdev_path"
     done
 
     return $OCF_NOT_RUNNING
