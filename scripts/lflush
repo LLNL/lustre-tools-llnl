@@ -25,7 +25,7 @@
 #
 # Based on flush-lustre-client-locks script by Herb Wartens.
 
-declare -r nsdir=/proc/fs/lustre/ldlm/namespaces
+declare nsdir
 declare -r prog=lflush
 
 vopt=0
@@ -85,7 +85,12 @@ flush_locks()
 
 [ $(id -u) = 0 ] || die "must run as root"
 
-if [ ! -d /proc/fs/lustre/ldlm/namespaces ]; then
+nsdir=/sys/fs/lustre/ldlm/namespaces
+if [ ! -d $nsdir ]; then
+	nsdir=/proc/fs/lustre/ldlm/namespaces
+fi
+
+if [ ! -d $nsdir ]; then
     warn "lustre client is not active - nothing to do"
     exit 0
 fi
