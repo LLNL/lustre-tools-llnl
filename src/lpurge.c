@@ -610,6 +610,57 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
         return inode_count;
 }
 
+#ifdef HAVE_LINUX_LUSTRE_LUSTRE_USER_H
+
+/* Lustre >= 2.12 */
+static int
+llapi_stat_mds(int fd, char *fname, struct stat *sb)
+{
+        const size_t bufsize = MAX(MAXPATHLEN,
+                                   sizeof(struct lov_user_mds_data) +
+                                   sizeof(struct lov_user_ost_data) * 2000);
+        char buf[bufsize];
+        lstatx_t *lsx = &((struct lov_user_mds_data *)buf)->lmd_stx;
+        int ret = -1;
+
+        if (strlen(fname) >= bufsize) {
+                errno = EINVAL;
+                goto done;
+        }
+
+        /* Usage: ioctl(fd, IOC_MDC_GETFILEINFO, buf)
+         * IN:  fd   open file descriptor of file's parent directory
+         * IN:  buf  file name (no path)
+         * OUT: buf  lstatx_t
+         */
+        strncpy(buf, fname, bufsize);
+        if ((ret = ioctl(fd, IOC_MDC_GETFILEINFO, buf)) < 0)
+                goto done;
+
+        /* Copy 'lstatx_t' to 'struct stat'
+         */
+        sb->st_dev     = makedev(lsx->stx_dev_major, lsx->stx_dev_minor);
+        sb->st_ino     = lsx->stx_ino;
+        sb->st_mode    = lsx->stx_mode;
+        sb->st_nlink   = lsx->stx_nlink;
+        sb->st_uid     = lsx->stx_uid;
+        sb->st_gid     = lsx->stx_gid;
+        sb->st_rdev    = makedev(lsx->stx_rdev_major, lsx->stx_rdev_minor);
+        sb->st_size    = lsx->stx_size;
+        sb->st_blksize = lsx->stx_blksize;
+        sb->st_blocks  = lsx->stx_blocks;
+
+        /* non-2038 safe workaround, I expect lpurge to go away. */
+        sb->st_atime   = ((time_t) lsx->stx_atime.tv_sec & INT_MAX);
+        sb->st_mtime   = ((time_t) lsx->stx_mtime.tv_sec & INT_MAX);
+        sb->st_ctime   = ((time_t) lsx->stx_ctime.tv_sec & INT_MAX);
+done:
+        return ret;
+}
+
+#else
+
+/* Lustre < 2.12 */
 static int
 llapi_stat_mds(int fd, char *fname, struct stat *sb)
 {
@@ -652,6 +703,7 @@ llapi_stat_mds(int fd, char *fname, struct stat *sb)
 done:
         return ret;
 }
+#endif
 
 static int
 is_lustre_fs(const char *path)
