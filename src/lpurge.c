@@ -46,6 +46,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <signal.h>
+#include <sys/sysmacros.h>
 
 #include <lustre/lustre_user.h>
 
