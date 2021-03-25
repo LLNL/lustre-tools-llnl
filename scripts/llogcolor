@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 # Copyright (c) 2011, Lawrence Livermore National Security, LLC.
 # Produced at the Lawrence Livermore National Laboratory.
@@ -20,11 +20,12 @@
 # along with this program; if not, write to the Free Software Foundation,
 # Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
+import argparse
 import datetime
 import errno
 import fileinput
-import optparse
 import os
+import pathlib
 import re
 import signal
 import subprocess
@@ -66,7 +67,7 @@ colors = {
 # Example line from a lustre log:
 # 00000020:00000080:2.0F:1192055998.876285:0:6848:0:(obd_config.c:714:class_process_config()) processing cmd: cf003
 pattern = re.compile(
-    r"(?P<begin>    \d+:\d+:\d+(\.\d+)?F?:)"
+    r"(?P<begin>     \d+:\d+:\d+(\.\d+)?F?:)"
     r"(?P<timestamp> \d+\.\d+)"
     r"(?P<middle>    :\d+:)"
     r"(?P<threadid>  \d+)"
@@ -74,6 +75,9 @@ pattern = re.compile(
     re.VERBOSE,
 )
 
+# color_round_robin and color_index (defined in main)
+# are used to select the color for the next
+# threadid encountered in the logs
 color_round_robin = [
     "green",
     "yellow",
@@ -90,76 +94,82 @@ color_round_robin = [
 ]
 
 
-def next_ansi_color():
-    next_color = colors[color_round_robin[0]]
-    color_round_robin.append(color_round_robin.pop(0))  # rotate the list
-    return next_color
+def make_parser():
+    """Create the argument parser."""
+    description = (
+        "Accepts a lustre log on stdin or as a filename on the command line, "
+        "and outputs a colorized version of the log. "
+        "Lines are colored by task id. By default, and if stdout is a tty, "
+        "the pager (less) is called to display the colorized log."
+    )
 
-
-usage = """usage: %prog [options] [log1] [log2] ... [logN]
-
-%prog accepts a lustre log on stdin or as a filename on the command line,
-and outputs a colorized version of the log.  Lines are colored by task id.
-By default, and if stdout is a tty, %prog calls the pager (less) to display
-the colorized log.
-""".strip()
-
-
-def main():
-    # Parse command-line options
-    p = optparse.OptionParser(usage=usage)
-    p.add_option(
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
         "-d",
         "--date",
         action="store_true",
         help="convert date to human-readable form",
     )
-    p.add_option(
+    parser.add_argument(
         "-s",
         "--split",
         action="store_true",
         help="create a separate file for each thread",
     )
-    p.add_option(
+    parser.add_argument(
         "-t",
         "--thread",
-        type="string",
+        type=str,
         metavar="TID",
         help="highlight one thread in a unique color (black on cyan)",
     )
-    p.add_option(
+    parser.add_argument(
         "-P",
         "--no-pager",
         action="store_false",
         dest="pager",
         help="disable the pager, just write to stdout",
     )
-    p.add_option(
+    parser.add_argument(
         "-C",
         "--no-color",
         action="store_false",
         dest="color",
         help="disable all colorization",
     )
-    p.set_defaults(color=True)
-    p.set_defaults(pager=True)
-    p.set_defaults(split=False)
-    p.set_defaults(date=False)
-    options, args = p.parse_args()
+    parser.add_argument(
+        "files", nargs="*", help="the log files to be processed",
+    )
+
+    return parser
+
+
+def main(args=None):
+
+    parser = make_parser()
+    # if args aren't passed in, sys.argv is used
+    args = parser.parse_args(args=args)
 
     if not sys.stdout.isatty():
-        options.pager = False
+        args.pager = False
 
-    split_dir = "/tmp/llogcolor.%d" % (os.getpid())
-    combined = os.path.join(split_dir, "combined")
+    # used to do a round-robin color selection
+    color_index = 0
 
-    if options.split:
-        os.mkdir(split_dir)
-        output = open(combined, "w")
+    split_dir = pathlib.Path("/tmp/llogcolor.{}".format(os.getpid()))
+    combined = split_dir / "combined"
+
+    if args.split:
+        split_dir.mkdir()
+        output = combined.open(mode="w")
         pager = None
-        pass
-    elif options.pager:
-        pager = subprocess.Popen(["less", "-KXRS"], stdin=subprocess.PIPE)
+    elif args.pager:
+        # open with encoding specified so that the subprocess
+        # can accept strings as input, not bytes
+        # this makes it behave like the other possible outputs
+        pager = subprocess.Popen(
+            ["less", "-KXRS"], stdin=subprocess.PIPE, encoding="utf-8"
+        )
         output = pager.stdin
     else:
         pager = None
@@ -169,7 +179,7 @@ def main():
     thread_color = {}
     thread_file = {}
     try:
-        for line in fileinput.input(files=args):
+        for line in fileinput.input(files=args.files):
             result = pattern.match(line)
             if not result:
                 output.write(line)
@@ -179,16 +189,19 @@ def main():
             ts = result.group("timestamp")
 
             if tid not in thread_color:
-                if not options.color:
+                if not args.color:
                     thread_color[tid] = ""
-                elif tid == options.thread:
+                elif tid == args.thread:
                     thread_color[tid] = colors["black"] + colors["on_cyan"]
                 else:
-                    thread_color[tid] = next_ansi_color()
-                if options.split:
-                    thread_file[tid] = open(os.path.join(split_dir, tid), "w")
+                    # select the next color from color_round_robin
+                    # then increment the color_index
+                    thread_color[tid] = colors[color_round_robin[color_index]]
+                    color_index = (color_index + 1) % len(color_round_robin)
+                if args.split:
+                    thread_file[tid] = (split_dir / tid).open("w")
 
-            if options.date:
+            if args.date:
                 ts = str(datetime.datetime.fromtimestamp(float(ts)))
                 line = (
                     thread_color[tid]
@@ -212,33 +225,34 @@ def main():
                 )
 
             output.write(line)
-            if options.split:
+            if args.split:
                 thread_file[tid].write(line)
     except KeyboardInterrupt:
         if pager:
             pager.send_signal(signal.SIGINT)
         return 1
-    except IOError as (num, strerror):
+    except IOError as ioerror:
+        num, strerror = ioerror
         if pager:
             pager.kill()
         if num == errno.EPIPE:  # Ignore "Broken pipe", user quit less
             return 0
         raise
 
-    if options.color:
+    if args.color:
         output.write(colors["default"])
     output.close()
 
-    if options.split:
+    if args.split:
         for f in thread_file.values():
-            if options.color:
+            if args.color:
                 f.write(colors["default"])
             f.close()
         filenames = [int(x) for x in thread_file.keys()]
         filenames.sort()
-        filenames = [os.path.join(split_dir, str(x)) for x in filenames]
+        filenames = [split_dir / str(x) for x in filenames]
         filenames = [combined] + filenames
-        if options.pager:
+        if args.pager:
             try:
                 pager = subprocess.Popen(
                     ["less", "-RK", "--force"] + filenames
@@ -247,10 +261,10 @@ def main():
             except KeyboardInterrupt:
                 pager.send_signal(signal.SIGINT)
             for f in filenames:
-                os.remove(f)
-            os.rmdir(split_dir)
+                f.unlink()
+                split_dir.rmdir()
         else:
-            print "Split log files are located in", split_dir
+            print("Split log files are located in", split_dir)
     elif pager:
         pager.wait()
 
