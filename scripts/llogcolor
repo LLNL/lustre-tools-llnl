@@ -21,72 +21,72 @@
 # Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
 import datetime
+import errno
 import fileinput
 import optparse
 import os
 import re
-import sys
-import subprocess
 import signal
-import errno
+import subprocess
+import sys
 
 colors = {
-    'default': "\033[0m",
-    'bold': "\033[1m",
-    'underline': "\033[4m",
-    'blink': "\033[5m",
-    'reverse': "\033[7m",
-    'concealed': "\033[8m",
-    'black': "\033[30m",
-    'red': "\033[31m",
-    'green': "\033[32m",
-    'yellow': "\033[33m",
-    'blue': "\033[34m",
-    'magenta': "\033[35m",
-    'cyan': "\033[36m",
-    'white': "\033[37m",
-    'bright_black': "\033[90m",
-    'bright_red': "\033[91m",
-    'bright_green': "\033[92m",
-    'bright_yellow': "\033[93m",
-    'bright_blue': "\033[94m",
-    'bright_magenta': "\033[95m",
-    'bright_cyan': "\033[96m",
-    'bright_white': "\033[97m",
-    'on_black': "\033[40m",
-    'on_red': "\033[41m",
-    'on_green': "\033[42m",
-    'on_yellow': "\033[43m",
-    'on_blue': "\033[44m",
-    'on_magenta': "\033[45m",
-    'on_cyan': "\033[46m",
-    'on_white': "\033[47m",
+    "default": "\033[0m",
+    "bold": "\033[1m",
+    "underline": "\033[4m",
+    "blink": "\033[5m",
+    "reverse": "\033[7m",
+    "concealed": "\033[8m",
+    "black": "\033[30m",
+    "red": "\033[31m",
+    "green": "\033[32m",
+    "yellow": "\033[33m",
+    "blue": "\033[34m",
+    "magenta": "\033[35m",
+    "cyan": "\033[36m",
+    "white": "\033[37m",
+    "bright_black": "\033[90m",
+    "bright_red": "\033[91m",
+    "bright_green": "\033[92m",
+    "bright_yellow": "\033[93m",
+    "bright_blue": "\033[94m",
+    "bright_magenta": "\033[95m",
+    "bright_cyan": "\033[96m",
+    "bright_white": "\033[97m",
+    "on_black": "\033[40m",
+    "on_red": "\033[41m",
+    "on_green": "\033[42m",
+    "on_yellow": "\033[43m",
+    "on_blue": "\033[44m",
+    "on_magenta": "\033[45m",
+    "on_cyan": "\033[46m",
+    "on_white": "\033[47m",
 }
 
 # Example line from a lustre log:
 # 00000020:00000080:2.0F:1192055998.876285:0:6848:0:(obd_config.c:714:class_process_config()) processing cmd: cf003
 pattern = re.compile(
-    r'(?P<begin>    \d+:\d+:\d+(\.\d+)?F?:)'
-    '(?P<timestamp> \d+\.\d+)'
-    '(?P<middle>    :\d+:)'
-    '(?P<threadid>  \d+)'
-    '(?P<end>       :.+)',
+    r"(?P<begin>    \d+:\d+:\d+(\.\d+)?F?:)"
+    "(?P<timestamp> \d+\.\d+)"
+    "(?P<middle>    :\d+:)"
+    "(?P<threadid>  \d+)"
+    "(?P<end>       :.+)",
     re.VERBOSE,
 )
 
 color_round_robin = [
-    'green',
-    'yellow',
-    'magenta',
-    'cyan',
-    'white',
-    'red',
-    'bright_green',
-    'bright_yellow',
-    'bright_magenta',
-    'bright_cyan',
-    'bright_white',
-    'bright_red',
+    "green",
+    "yellow",
+    "magenta",
+    "cyan",
+    "white",
+    "red",
+    "bright_green",
+    "bright_yellow",
+    "bright_magenta",
+    "bright_cyan",
+    "bright_white",
+    "bright_red",
 ]
 
 
@@ -109,37 +109,37 @@ def main():
     # Parse command-line options
     p = optparse.OptionParser(usage=usage)
     p.add_option(
-        '-d',
-        '--date',
-        action='store_true',
-        help='convert date to human-readable form',
+        "-d",
+        "--date",
+        action="store_true",
+        help="convert date to human-readable form",
     )
     p.add_option(
-        '-s',
-        '--split',
-        action='store_true',
-        help='create a separate file for each thread',
+        "-s",
+        "--split",
+        action="store_true",
+        help="create a separate file for each thread",
     )
     p.add_option(
-        '-t',
-        '--thread',
-        type='string',
-        metavar='TID',
-        help='highlight one thread in a unique color (black on cyan)',
+        "-t",
+        "--thread",
+        type="string",
+        metavar="TID",
+        help="highlight one thread in a unique color (black on cyan)",
     )
     p.add_option(
-        '-P',
-        '--no-pager',
-        action='store_false',
-        dest='pager',
-        help='disable the pager, just write to stdout',
+        "-P",
+        "--no-pager",
+        action="store_false",
+        dest="pager",
+        help="disable the pager, just write to stdout",
     )
     p.add_option(
-        '-C',
-        '--no-color',
-        action='store_false',
-        dest='color',
-        help='disable all colorization',
+        "-C",
+        "--no-color",
+        action="store_false",
+        dest="color",
+        help="disable all colorization",
     )
     p.set_defaults(color=True)
     p.set_defaults(pager=True)
@@ -150,16 +150,16 @@ def main():
     if not sys.stdout.isatty():
         options.pager = False
 
-    split_dir = '/tmp/llogcolor.%d' % (os.getpid())
-    combined = os.path.join(split_dir, 'combined')
+    split_dir = "/tmp/llogcolor.%d" % (os.getpid())
+    combined = os.path.join(split_dir, "combined")
 
     if options.split:
         os.mkdir(split_dir)
-        output = open(combined, 'w')
+        output = open(combined, "w")
         pager = None
         pass
     elif options.pager:
-        pager = subprocess.Popen(['less', '-KXRS'], stdin=subprocess.PIPE)
+        pager = subprocess.Popen(["less", "-KXRS"], stdin=subprocess.PIPE)
         output = pager.stdin
     else:
         pager = None
@@ -175,40 +175,40 @@ def main():
                 output.write(line)
                 continue
 
-            tid = result.group('threadid')
-            ts = result.group('timestamp')
+            tid = result.group("threadid")
+            ts = result.group("timestamp")
 
             if tid not in thread_color:
                 if not options.color:
-                    thread_color[tid] = ''
+                    thread_color[tid] = ""
                 elif tid == options.thread:
-                    thread_color[tid] = colors['black'] + colors['on_cyan']
+                    thread_color[tid] = colors["black"] + colors["on_cyan"]
                 else:
                     thread_color[tid] = next_ansi_color()
                 if options.split:
-                    thread_file[tid] = open(os.path.join(split_dir, tid), 'w')
+                    thread_file[tid] = open(os.path.join(split_dir, tid), "w")
 
             if options.date:
                 ts = str(datetime.datetime.fromtimestamp(float(ts)))
                 line = (
                     thread_color[tid]
                     + ts
-                    + ' '
-                    + result.group('begin')
-                    + result.group('middle')
+                    + " "
+                    + result.group("begin")
+                    + result.group("middle")
                     + tid
-                    + result.group('end')
-                    + '\n'
+                    + result.group("end")
+                    + "\n"
                 )
             else:
                 line = (
                     thread_color[tid]
-                    + result.group('begin')
+                    + result.group("begin")
                     + ts
-                    + result.group('middle')
+                    + result.group("middle")
                     + tid
-                    + result.group('end')
-                    + '\n'
+                    + result.group("end")
+                    + "\n"
                 )
 
             output.write(line)
@@ -226,13 +226,13 @@ def main():
         raise
 
     if options.color:
-        output.write(colors['default'])
+        output.write(colors["default"])
     output.close()
 
     if options.split:
         for f in thread_file.values():
             if options.color:
-                f.write(colors['default'])
+                f.write(colors["default"])
             f.close()
         filenames = [int(x) for x in thread_file.keys()]
         filenames.sort()
@@ -241,7 +241,7 @@ def main():
         if options.pager:
             try:
                 pager = subprocess.Popen(
-                    ['less', '-RK', '--force'] + filenames
+                    ["less", "-RK", "--force"] + filenames
                 )
                 pager.wait()
             except KeyboardInterrupt:
@@ -250,10 +250,10 @@ def main():
                 os.remove(f)
             os.rmdir(split_dir)
         else:
-            print 'Split log files are located in', split_dir
+            print "Split log files are located in", split_dir
     elif pager:
         pager.wait()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
