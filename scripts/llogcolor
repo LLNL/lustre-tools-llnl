@@ -25,6 +25,7 @@ import datetime
 import errno
 import fileinput
 import os
+import pathlib
 import re
 import signal
 import subprocess
@@ -89,15 +90,15 @@ color_round_robin = [
     "bright_red",
 ]
 
-description = (
-    "Accepts a lustre log on stdin or as a filename on the command line, "
-    "and outputs a colorized version of the log. "
-    "Lines are colored by task id. By default, and if stdout is a tty, "
-    "the pager (less) is called to display the colorized log."
-)
 
-def main(test_args=None):
-    # Parse command-line options
+def make_parser():
+    """Create the argument parser."""
+    description = (
+        "Accepts a lustre log on stdin or as a filename on the command line, "
+        "and outputs a colorized version of the log. "
+        "Lines are colored by task id. By default, and if stdout is a tty, "
+        "the pager (less) is called to display the colorized log."
+    )
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
         "-d",
@@ -138,6 +139,13 @@ def main(test_args=None):
         help="the log files to be processed",
     )
 
+    return parser
+
+
+def main(test_args=None):
+    # Parse command-line options
+    parser = make_parser()
+    # if test_args aren't passed in, sys.argv is used
     args = parser.parse_args(args=test_args)
 
     if not sys.stdout.isatty():
@@ -146,12 +154,12 @@ def main(test_args=None):
     # used to do a round-robin color selection
     color_index = 0
 
-    split_dir = "/tmp/llogcolor.%d" % (os.getpid())
-    combined = os.path.join(split_dir, "combined")
+    split_dir = pathlib.Path(f"/tmp/llogcolor.{os.getpid()}")
+    combined = split_dir / "combined"
 
     if args.split:
-        os.mkdir(split_dir)
-        output = open(combined, "w")
+        split_dir.mkdir()
+        output = combined.open(mode="w")
         pager = None
     elif args.pager:
         # open with encoding specified so that the subprocess
@@ -189,7 +197,7 @@ def main(test_args=None):
                     thread_color[tid] = colors[color_round_robin[color_index]]
                     color_index = (color_index + 1) % len(color_round_robin)
                 if args.split:
-                    thread_file[tid] = open(os.path.join(split_dir, tid), "w")
+                    thread_file[tid] = (split_dir / tid).open("w")
 
             if args.date:
                 ts = str(datetime.datetime.fromtimestamp(float(ts)))
@@ -240,7 +248,7 @@ def main(test_args=None):
             f.close()
         filenames = [int(x) for x in thread_file.keys()]
         filenames.sort()
-        filenames = [os.path.join(split_dir, str(x)) for x in filenames]
+        filenames = [split_dir / str(x) for x in filenames]
         filenames = [combined] + filenames
         if args.pager:
             try:
@@ -251,8 +259,8 @@ def main(test_args=None):
             except KeyboardInterrupt:
                 pager.send_signal(signal.SIGINT)
             for f in filenames:
-                os.remove(f)
-            os.rmdir(split_dir)
+                f.unlink()
+            split_dir.rmdir()
         else:
             print(f"Split log files are located in {split_dir}")
     elif pager:
