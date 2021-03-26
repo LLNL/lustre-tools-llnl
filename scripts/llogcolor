@@ -66,11 +66,11 @@ colors = {
 # Example line from a lustre log:
 # 00000020:00000080:2.0F:1192055998.876285:0:6848:0:(obd_config.c:714:class_process_config()) processing cmd: cf003
 pattern = re.compile(
-    r"(?P<begin>    \d+:\d+:\d+(\.\d+)?F?:)"
-    "(?P<timestamp> \d+\.\d+)"
-    "(?P<middle>    :\d+:)"
-    "(?P<threadid>  \d+)"
-    "(?P<end>       :.+)",
+    r"(?P<begin>     \d+:\d+:\d+(\.\d+)?F?:)"
+    r"(?P<timestamp> \d+\.\d+)"
+    r"(?P<middle>    :\d+:)"
+    r"(?P<threadid>  \d+)"
+    r"(?P<end>       :.+)",
     re.VERBOSE,
 )
 
