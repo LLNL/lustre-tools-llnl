@@ -89,12 +89,6 @@ color_round_robin = [
     "bright_red",
 ]
 
-
-def next_ansi_color():
-    next_color = colors[color_round_robin[0]]
-    color_round_robin.append(color_round_robin.pop(0))  # rotate the list
-    return next_color
-
 description = (
     "Accepts a lustre log on stdin or as a filename on the command line, "
     "and outputs a colorized version of the log. "
@@ -102,7 +96,7 @@ description = (
     "the pager (less) is called to display the colorized log."
 )
 
-def main():
+def main(test_args=None):
     # Parse command-line options
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
@@ -144,10 +138,13 @@ def main():
         help="the log files to be processed",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(args=test_args)
 
     if not sys.stdout.isatty():
         args.pager = False
+
+    # used to do a round-robin color selection
+    color_index = 0
 
     split_dir = "/tmp/llogcolor.%d" % (os.getpid())
     combined = os.path.join(split_dir, "combined")
@@ -187,7 +184,10 @@ def main():
                 elif tid == args.thread:
                     thread_color[tid] = colors["black"] + colors["on_cyan"]
                 else:
-                    thread_color[tid] = next_ansi_color()
+                    # select the next color from color_round_robin
+                    # then increment the color_index
+                    thread_color[tid] = colors[color_round_robin[color_index]]
+                    color_index = (color_index + 1) % len(color_round_robin)
                 if args.split:
                     thread_file[tid] = open(os.path.join(split_dir, tid), "w")
 
