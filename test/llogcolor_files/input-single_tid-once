@@ -1,0 +1,22 @@
+00040000:00000001:3.0F:1605658370.834898:0:5635:0:(qmt_handler.c:354:qmt_quotactl()) Process entered
+00040000:00000001:3.0:1605658370.834900:0:5635:0:(qmt_handler.c:56:qmt_get()) Process entered
+00040000:00000001:3.0:1605658370.834901:0:5635:0:(qmt_pool.c:766:qmt_pool_lqe_lookup()) Process entered
+00040000:00000001:3.0:1605658370.834902:0:5635:0:(qmt_pool.c:387:qmt_pool_lookup()) Process entered
+00040000:04000000:3.0:1605658370.834903:0:5635:0:(qmt_pool.c:396:qmt_pool_lookup()) type 1 name           (null) index -1
+00040000:00000001:3.0:1605658370.834904:0:5635:0:(qmt_pool.c:434:qmt_pool_lookup()) Process leaving (rc=18446621829961902080 : -122243747649536 : ffff90d1e8d86800)
+00040000:00000001:3.0:1605658370.834906:0:5635:0:(lquota_entry.c:330:lqe_locate_find()) Process entered
+00040000:00000001:3.0:1605658370.834909:0:5635:0:(lquota_entry.c:335:lqe_locate_find()) Process leaving (rc=18446621830160155296 : -122243549396320 : ffff90d1f4a982a0)
+00040000:00000001:3.0:1605658370.834910:0:5635:0:(qmt_pool.c:786:qmt_pool_lqe_lookup()) Process leaving (rc=18446621830160155296 : -122243549396320 : ffff90d1f4a982a0)
+00040000:04000000:3.0:1605658370.834911:0:5635:0:(qmt_handler.c:69:qmt_get()) $$$ fetch settings  qmt:lustre-QMT0000 pool:md-0x0 id:60000 enforced:0 hard:0 soft:0 granted:0 time:0 qunit: 0 edquot:0 may_rel:0 revoke:0 default:no
+00040000:00000001:3.0:1605658370.834914:0:5635:0:(qmt_handler.c:91:qmt_get()) Process leaving (rc=0 : 0 : 0)
+00040000:00000001:3.0:1605658370.834914:0:5635:0:(qmt_handler.c:56:qmt_get()) Process entered
+00040000:00000001:3.0:1605658370.834915:0:5635:0:(qmt_pool.c:766:qmt_pool_lqe_lookup()) Process entered
+00040000:00000001:3.0:1605658370.834915:0:5635:0:(qmt_pool.c:387:qmt_pool_lookup()) Process entered
+00040000:04000000:3.0:1605658370.834916:0:5635:0:(qmt_pool.c:396:qmt_pool_lookup()) type 2 name           (null) index -1
+00040000:00000001:3.0:1605658370.834916:0:5635:0:(qmt_pool.c:434:qmt_pool_lookup()) Process leaving (rc=18446621829961903616 : -122243747648000 : ffff90d1e8d86e00)
+00040000:00000001:3.0:1605658370.834917:0:5635:0:(lquota_entry.c:330:lqe_locate_find()) Process entered
+00040000:00000001:3.0:1605658370.834918:0:5635:0:(lquota_entry.c:335:lqe_locate_find()) Process leaving (rc=18446621830160154848 : -122243549396768 : ffff90d1f4a980e0)
+00040000:00000001:3.0:1605658370.834919:0:5635:0:(qmt_pool.c:786:qmt_pool_lqe_lookup()) Process leaving (rc=18446621830160154848 : -122243549396768 : ffff90d1f4a980e0)
+00040000:04000000:3.0:1605658370.834920:0:5635:0:(qmt_handler.c:69:qmt_get()) $$$ fetch settings  qmt:lustre-QMT0000 pool:dt-0x0 id:60000 enforced:1 hard:20480 soft:0 granted:5120 time:0 qunit: 4096 edquot:0 may_rel:0 revoke:0 default:no
+00040000:00000001:3.0:1605658370.834922:0:5635:0:(qmt_handler.c:91:qmt_get()) Process leaving (rc=0 : 0 : 0)
+00040000:00000001:3.0:1605658370.834922:0:5635:0:(qmt_handler.c:484:qmt_quotactl()) Process leaving (rc=0 : 0 : 0)
