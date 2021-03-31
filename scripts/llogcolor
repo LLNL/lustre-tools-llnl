@@ -25,6 +25,7 @@ import datetime
 import errno
 import fileinput
 import os
+import pathlib
 import re
 import signal
 import subprocess
@@ -95,15 +96,14 @@ def next_ansi_color():
     color_round_robin.append(color_round_robin.pop(0))  # rotate the list
     return next_color
 
-description = (
-    "Accepts a lustre log on stdin or as a filename on the command line, "
-    "and outputs a colorized version of the log. "
-    "Lines are colored by task id. By default, and if stdout is a tty, "
-    "the pager (less) is called to display the colorized log."
-)
-
-def main():
-    # Parse command-line options
+def make_parser():
+    """Create the argument parser."""
+    description = (
+        "Accepts a lustre log on stdin or as a filename on the command line, "
+        "and outputs a colorized version of the log. "
+        "Lines are colored by task id. By default, and if stdout is a tty, "
+        "the pager (less) is called to display the colorized log."
+    )
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
         "-d",
@@ -144,17 +144,23 @@ def main():
         help="the log files to be processed",
     )
 
+    return parser
+
+
+def main():
+    # Parse command-line options
+    parser = make_parser()
     args = parser.parse_args()
 
     if not sys.stdout.isatty():
         args.pager = False
 
-    split_dir = "/tmp/llogcolor.%d" % (os.getpid())
-    combined = os.path.join(split_dir, "combined")
+    split_dir = pathlib.Path(f"/tmp/llogcolor.{os.getpid()}")
+    combined = split_dir / "combined"
 
     if args.split:
-        os.mkdir(split_dir)
-        output = open(combined, "w")
+        split_dir.mkdir()
+        output = combined.open(mode="w")
         pager = None
     elif args.pager:
         # specify an encoding so the subprocess can accept strings
@@ -189,8 +195,7 @@ def main():
                 else:
                     thread_color[tid] = next_ansi_color()
                 if args.split:
-                    thread_file[tid] = open(os.path.join(split_dir, tid), "w")
-
+                    thread_file[tid] = (split_dir / tid).open("w")
             if args.date:
                 ts = str(datetime.datetime.fromtimestamp(float(ts)))
                 line = (
@@ -240,7 +245,7 @@ def main():
             f.close()
         filenames = [int(x) for x in thread_file.keys()]
         filenames.sort()
-        filenames = [os.path.join(split_dir, str(x)) for x in filenames]
+        filenames = [split_dir / str(x) for x in filenames]
         filenames = [combined] + filenames
         if args.pager:
             try:
@@ -251,8 +256,8 @@ def main():
             except KeyboardInterrupt:
                 pager.send_signal(signal.SIGINT)
             for f in filenames:
-                os.remove(f)
-            os.rmdir(split_dir)
+                f.unlink()
+            split_dir.rmdir()
         else:
             print(f"Split log files are located in {split_dir}")
     elif pager:
