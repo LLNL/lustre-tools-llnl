@@ -90,6 +90,10 @@ def get_usage(ids, userorgroup, mountpt, obd_uuid):
             # put quota stats in the dictionary, and convert each field
             # to an integer at the same time
             usage[name] = [try_int(x) for x in args]
+
+            # stop the loop once an acceptable line has been processed
+            break
+
     return usage
 
 def get_ids_from_directory(directory, userorgroup):
@@ -103,7 +107,7 @@ def get_ids_from_directory(directory, userorgroup):
         if not os.path.isdir(path):
             continue
         st = os.stat(path)
-        
+
         if (userorgroup == 'user'):
             ident = st.st_uid
         elif (userorgroup == 'group'):
