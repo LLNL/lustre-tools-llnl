@@ -24,6 +24,7 @@
 # in that dataset, this script will call zdb to retreive the Lustre FID
 # and print it out in standard Lustre FID format.
 
+import argparse
 import sys
 import subprocess
 
@@ -32,13 +33,27 @@ def from_bytes(b):
     return sum(b[i] << i * 8 for i in range(len(b)))
 
 
+def make_parser():
+    description = (
+        "Given a zfs dataset for a Lustre OST "
+        "and the object number of a file "
+        "in that dataset, this script will call zdb to "
+        "retreive the Lustre FID "
+        "and print it out in standard Lustre FID format."
+    )
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("dataset", help="the name of the zfs dataset")
+    parser.add_argument("object", help="the object id number")
+
+    return parser
+
+
 def main():
-    if len(sys.argv) != 3:
-        print("Usage:", sys.argv[0], "<dataset> <object>")
-        return 1
+    parser = make_parser()
+    args = parser.parse_args()
 
     p = subprocess.run(
-        ["zdb", "-vvv", sys.argv[1], sys.argv[2]],
+        ["zdb", "-vvv", args.dataset, args.object],
         stdout=subprocess.PIPE,
         check=True,
     )
