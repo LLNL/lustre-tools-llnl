@@ -35,10 +35,12 @@ def main():
         print("Usage:", sys.argv[0], "<dataset> <object>")
         return 1
 
-    p = subprocess.Popen(["zdb", "-vvv", sys.argv[1], sys.argv[2]],
-                          stdout=subprocess.PIPE)
-    pout, perr = p.communicate()
-    pout = pout.decode()
+    p = subprocess.run(
+        ["zdb", "-vvv", sys.argv[1], sys.argv[2]],
+        stdout=subprocess.PIPE,
+        check=True,
+    )
+    pout = p.stdout.decode()
 
     b = bytearray()
     for line in pout.split('\n'):
