@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 # Copyright (c) 2014, Lawrence Livermore National Security, LLC.
 # Produced at the Lawrence Livermore National Laboratory.
@@ -27,28 +27,33 @@
 import sys
 import subprocess
 
+
 def from_bytes(b):
-    return sum(b[i] << i*8 for i in range(len(b)))
+    return sum(b[i] << i * 8 for i in range(len(b)))
+
 
 def main():
     if len(sys.argv) != 3:
-        print "Usage:", sys.argv[0], "<dataset> <object>"
+        print("Usage:", sys.argv[0], "<dataset> <object>")
         return 1
 
-    p = subprocess.Popen(["zdb", "-vvv", sys.argv[1], sys.argv[2]],
-                          stdout=subprocess.PIPE)
-    pout, perr = p.communicate()
+    p = subprocess.run(
+        ["zdb", "-vvv", sys.argv[1], sys.argv[2]],
+        stdout=subprocess.PIPE,
+        check=True,
+    )
+    pout = p.stdout.decode()
 
     b = bytearray()
-    for line in pout.split('\n'):
+    for line in pout.split("\n"):
         part = line.split()
-        if not part or part[0] != 'trusted.fid':
+        if not part or part[0] != "trusted.fid":
             continue
         fid = part[2]
         while len(fid) > 0:
             val = fid[0]
             fid = fid[1:]
-            if val == '\\':
+            if val == "\\":
                 val = fid[0:3]
                 fid = fid[3:]
                 b.append(int(val, 8))
@@ -56,15 +61,18 @@ def main():
                 b.append(ord(val))
         break
 
-    print '[' \
-        + hex(from_bytes(b[0:8])) \
-        + ':' \
-        + hex(from_bytes(b[8:12])) \
-        + ':' \
-        + hex(from_bytes(b[12:16])) \
-        + ']'
+    print(
+        "["
+        + hex(from_bytes(b[0:8]))
+        + ":"
+        + hex(from_bytes(b[8:12]))
+        + ":"
+        + hex(from_bytes(b[12:16]))
+        + "]"
+    )
 
     return 0
 
-if __name__ == '__main__':
-      sys.exit(main())
+
+if __name__ == "__main__":
+    sys.exit(main())
