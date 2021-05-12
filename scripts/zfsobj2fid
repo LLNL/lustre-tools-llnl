@@ -27,8 +27,10 @@
 import sys
 import subprocess
 
+
 def from_bytes(b):
-    return sum(b[i] << i*8 for i in range(len(b)))
+    return sum(b[i] << i * 8 for i in range(len(b)))
+
 
 def main():
     if len(sys.argv) != 3:
@@ -43,15 +45,15 @@ def main():
     pout = p.stdout.decode()
 
     b = bytearray()
-    for line in pout.split('\n'):
+    for line in pout.split("\n"):
         part = line.split()
-        if not part or part[0] != 'trusted.fid':
+        if not part or part[0] != "trusted.fid":
             continue
         fid = part[2]
         while len(fid) > 0:
             val = fid[0]
             fid = fid[1:]
-            if val == '\\':
+            if val == "\\":
                 val = fid[0:3]
                 fid = fid[3:]
                 b.append(int(val, 8))
@@ -59,15 +61,18 @@ def main():
                 b.append(ord(val))
         break
 
-    print('[' \
-        + hex(from_bytes(b[0:8])) \
-        + ':' \
-        + hex(from_bytes(b[8:12])) \
-        + ':' \
-        + hex(from_bytes(b[12:16])) \
-        + ']')
+    print(
+        "["
+        + hex(from_bytes(b[0:8]))
+        + ":"
+        + hex(from_bytes(b[8:12]))
+        + ":"
+        + hex(from_bytes(b[12:16]))
+        + "]"
+    )
 
     return 0
 
-if __name__ == '__main__':
-      sys.exit(main())
+
+if __name__ == "__main__":
+    sys.exit(main())
