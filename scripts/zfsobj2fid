@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 # Copyright (c) 2014, Lawrence Livermore National Security, LLC.
 # Produced at the Lawrence Livermore National Laboratory.
@@ -32,12 +32,13 @@ def from_bytes(b):
 
 def main():
     if len(sys.argv) != 3:
-        print "Usage:", sys.argv[0], "<dataset> <object>"
+        print("Usage:", sys.argv[0], "<dataset> <object>")
         return 1
 
     p = subprocess.Popen(["zdb", "-vvv", sys.argv[1], sys.argv[2]],
                           stdout=subprocess.PIPE)
     pout, perr = p.communicate()
+    pout = pout.decode()
 
     b = bytearray()
     for line in pout.split('\n'):
@@ -56,13 +57,13 @@ def main():
                 b.append(ord(val))
         break
 
-    print '[' \
+    print('[' \
         + hex(from_bytes(b[0:8])) \
         + ':' \
         + hex(from_bytes(b[8:12])) \
         + ':' \
         + hex(from_bytes(b[12:16])) \
-        + ']'
+        + ']')
 
     return 0
 
