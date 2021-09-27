@@ -1,0 +1,229 @@
+#!/usr/bin/env python2
+
+import argparse
+import re
+import sys
+import subprocess
+
+cmdline_args = None
+
+all_nodes = []
+all_zpools = {}
+zpool_order = []
+all_lustre_services = {}
+lustre_service_order = []
+
+skip_pattern = re.compile('^\s*(#.*)?\n?$')
+def should_skip(line):
+    """Returns true is the line contains only a comment or whitespace"""
+    if skip_pattern.match(line):
+        return True
+    return False
+
+def file_regex_replace(regex, replacement, path):
+    '''Replace all instances of regex with replacement
+    for the the file at path.
+    '''
+    f = open(path, 'r+')
+    text = f.read()
+    text = re.sub(regex, replacement, text)
+    f.seek(0)
+    f.write(text)
+    f.truncate()
+    f.close()
+
+# Assume line in ldev looks like this for zfs:
+#  jet1   jet2   lquake-MGS0000  zfs:jet1-1/mgs
+def process_ldev_line(line):
+    global all_nodes
+    global all_zpools
+    global all_lustre_services
+
+    fields = line.split()
+    if len(fields) != 4:
+        sys.stderr.write('Wrong number of fields in line: '+line+'\n')
+        sys.exit(1)
+    node1, node2, lustre_service_name, zfs_dataset = fields
+    nodes = [node1, node2]
+
+    if zfs_dataset[:4] != 'zfs:':
+        sys.stderr.write('Fourth field is not prefixed with "zfs:"\n')
+        sys.exit(1)
+    zfs_dataset = zfs_dataset[4:]
+
+    if 'MGS' in lustre_service_name and lustre_service_name != 'MGS':
+        sys.stderr.write('WARNING: Target name "'+lustre_service_name+'" is not valid, using "MGS" instead\n')
+        lustre_service_name = 'MGS'
+
+    for node in nodes:
+        if node not in all_nodes:
+            all_nodes.append(node)
+    zpool = zfs_dataset.split('/')[0]
+
+    if zpool in all_zpools:
+        # Sanity check
+        if not set(all_zpools[zpool]).issuperset(set(nodes)):
+            sys.stderr.write('zpool "'+zpool+'" already instantiated on incompatible set of nodes\n')
+            sys.exit(1)
+    elif zpool not in all_zpools:
+        # Add zpool resource
+        all_zpools[zpool] = nodes
+        zpool_order.append(zpool)
+
+    all_lustre_services[lustre_service_name] = (zpool, zfs_dataset)
+    lustre_service_order.append(lustre_service_name)
+
+def deduce_cluster_name():
+    """Deduce the name of the cluster from the name of one node.
+
+    Strip the trailing digits off the end of the node name, and that probably
+    gives us the name of the cluster.  At least at LLNL."""
+    global all_nodes
+
+    node = all_nodes[0]
+
+    return node.rstrip('0123456789')
+
+def run(cmd):
+    print cmd
+
+    if cmdline_args.dry_run:
+        return
+
+    try:
+        rc = subprocess.call(cmd, shell=True)
+        if rc < 0:
+            print >>sys.stderr, "Child was terminated by signal", -rc
+        elif rc > 0:
+            print >>sys.stderr, "Error: ", rc
+    except OSError as e:
+        print >>sys.stderr, "Execution failed:", e
+
+def configure_location(resource, nodes, fixed_score_string=None):
+    if fixed_score_string is None:
+        score = len(nodes)*10
+    else:
+        score = fixed_score_string
+    for node in nodes:
+        id = resource+'_'+node
+        cmd = 'pcs constraint location add '+id+' '+resource
+        cmd += ' '+node+' '+str(score)
+        cmd += ' '+'resource-discovery=exclusive'
+        run(cmd)
+        if fixed_score_string is None:
+            score -= 10
+
+def configure():
+    cmd = 'pcs cluster setup'
+    cmd += ' '+cmdline_args.cluster_name
+    cmd += ' '+cmdline_args.mgmt_node
+    cmd += ' --corosync_conf /etc/corosync/corosync.conf --overwrite'
+    if not cmdline_args.no_corosync:
+        run(cmd)
+        # set crypto values to none, which are aes256 and sha256 by default
+        # this should be doable using the 'pcs cluster setup'
+        # command, but I haven't been able to make it work
+        file_regex_replace(
+            r'crypto_(cipher|hash): \w+\b',
+            r'crypto_\1: none',
+            '/etc/corosync/corosync.conf'
+        )
+    run('pcs cluster start')
+    run('pcs property set symmetric-cluster=false')
+    run('pcs property set stonith-action=off')
+    run('pcs property set batch-limit=100')
+    run('pcs property set cluster-recheck-interval=60')
+
+    node_str = ','.join(all_nodes)
+    cmd = 'pcs stonith create fence_pm fence_powerman'
+    cmd += ' ipaddr='+cmdline_args.fence_ipaddr
+    cmd += ' ipport='+cmdline_args.fence_ipport
+    cmd += ' pcmk_host_check=static-list pcmk_host_list="'+node_str+'"'
+    run(cmd)
+    run('pcs constraint location fence_pm prefers '+cmdline_args.mgmt_node)
+
+    for node in all_nodes:
+        run('pcs resource create --force '+node+' ocf:pacemaker:remote'+' server=e'+node+
+            ' reconnect_interval=60')
+        run('pcs constraint location '+node+' prefers '+cmdline_args.mgmt_node)
+
+    for zpool in zpool_order:
+        # Handle a zpool name that conflicts with a node name
+        if zpool in all_nodes:
+            zpool_resource = zpool+'_zpool'
+        else:
+            zpool_resource = zpool
+        nodes = all_zpools[zpool]
+        cmd = 'pcs resource create '+zpool_resource+' ocf:llnl:zpool'
+        cmd += ' import_options="-f -N -d /dev/disk/by-vdev"'
+        cmd += ' pool='+zpool
+        cmd += ' op start timeout=805'
+        run(cmd)
+
+        # We want suspended pools to immediately fail over to the other node.
+        run('pcs resource meta '+zpool_resource+' migration-threshold=1')
+
+        configure_location(zpool_resource, nodes)
+
+    # Make sure that the MGS is the first service, so we can easily add order
+    # constraint for the MGS before all other services.
+    i = lustre_service_order.index('MGS')
+    mgs = lustre_service_order.pop(i)
+    lustre_service_order.insert(0, mgs)
+
+    for service in lustre_service_order:
+        zpool=all_lustre_services[service][0]
+        # Handle a zpool name that conflicts with a node name
+        if zpool in all_nodes:
+            zpool_resource = zpool+'_zpool'
+        else:
+            zpool_resource = zpool
+        dataset=all_lustre_services[service][1]
+        nodes = all_zpools[zpool]
+        cmd = 'pcs resource create '+service+' ocf:llnl:lustre'
+        cmd += ' dataset='+dataset+' mountpoint=/mnt/lustre/'+service
+        run(cmd)
+        if service != 'MGS':
+            run('pcs constraint order MGS then '+service+' kind=Optional')
+        run('pcs constraint order '+zpool_resource+' then '+service)
+        cmd = 'pcs constraint colocation add '+service+' with '+zpool_resource
+        cmd += ' score=INFINITY'
+        run(cmd)
+        configure_location(service, nodes)
+
+def main():
+    global cmdline_args
+    parser = argparse.ArgumentParser(description='Input an ldev.conf file to generate the complimentary Pacemaker cib.xml file.')
+    parser.add_argument('infile', nargs='?', type=argparse.FileType('r'),
+                        default=sys.stdin,
+                        help='ldev.conf file name (default=stdin)')
+    parser.add_argument('--mgmt-node',
+                        help='Hostname of management node (by default uses hostname of current node)')
+    parser.add_argument('--cluster-name',
+                        help='Name of the cluster (by default guessed from a random hostname in infile)')
+    parser.add_argument('--fence-ipaddr', default='localhost',
+                        help='Powerman server IP address (for fence_powerman, default localhost)')
+    parser.add_argument('--fence-ipport', default='10101',
+                        help='Powerman server port number (for fence_powerman, default 10101)')
+    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--no-corosync', action='store_true',
+                        help='Don\'t create a new corosync.conf file.')
+    cmdline_args = parser.parse_args()
+
+    # turn it into a list, even if there is only one node
+    if cmdline_args.mgmt_node is None:
+        import socket
+        cmdline_args.mgmt_node = socket.gethostname()
+
+    for line in cmdline_args.infile:
+        if should_skip(line):
+            continue
+        process_ldev_line(line)
+
+    if cmdline_args.cluster_name is None:
+        cmdline_args.cluster_name = deduce_cluster_name()
+
+    configure()
+
+if __name__ == "__main__":
+    main()

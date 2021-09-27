@@ -20,30 +20,6 @@ def should_skip(line):
         return True
     return False
 
-def get_pacemaker_major_number():
-    '''Get the rpm major number of pacemaker,
-    and return as an int.
-    '''
-    rpm_version = subprocess.check_output(
-        ['rpm', '-q', 'pacemaker']
-    ).strip()
-
-    captured_major_number = re.match(r'pacemaker-(?P<major>\d+).*$', rpm_version)
-
-    return int(captured_major_number.group('major'))
-
-def file_regex_replace(regex, replacement, path):
-    '''Replace all instances of regex with replacement
-    for the the file at path.
-    '''
-    f = open(path, 'r+')
-    text = f.read()
-    text = re.sub(regex, replacement, text)
-    f.seek(0)
-    f.write(text)
-    f.truncate()
-    f.close()
-
 # Assume line in ldev looks like this for zfs:
 #  jet1   jet2   lquake-MGS0000  zfs:jet1-1/mgs
 def process_ldev_line(line):
@@ -126,34 +102,11 @@ def configure_location(resource, nodes, fixed_score_string=None):
             score -= 10
 
 def configure():
-    # the syntax for making the corosync.conf
-    # file depends on the pacemaker version
-    pacemaker_major_number = get_pacemaker_major_number()
-    if pacemaker_major_number == 1:
-        cmd = 'pcs cluster setup --force --local'
-        cmd += ' --name '+cmdline_args.cluster_name
-        cmd += ' '+cmdline_args.mgmt_node
-    elif pacemaker_major_number == 2:
-        cmd = 'pcs cluster setup'
-        cmd += ' '+cmdline_args.cluster_name
-        cmd += ' '+cmdline_args.mgmt_node
-        cmd += ' --corosync_conf /etc/corosync/corosync.conf --overwrite'
-    else:
-        raise ValueError(
-            'pacemaker rpm major number must '
-            'be 1 or 2 but is %d' % pacemaker_major_number
-        )
+    cmd = 'pcs cluster setup --force --local'
+    cmd += ' --name '+cmdline_args.cluster_name
+    cmd += ' '+cmdline_args.mgmt_node
     if not cmdline_args.no_corosync:
         run(cmd)
-        if pacemaker_major_number == 2:
-            # set crypto values to none, which are aes256 and sha256 by default
-            # this should be doable using the 'pcs cluster setup'
-            # command, but I haven't been able to make it work
-            file_regex_replace(
-                r'crypto_(cipher|hash): \w+\b',
-                r'crypto_\1: none',
-                '/etc/corosync/corosync.conf'
-            )
     run('pcs cluster start')
     run('pcs property set symmetric-cluster=false')
     run('pcs property set stonith-action=off')
@@ -169,12 +122,8 @@ def configure():
     run('pcs constraint location fence_pm prefers '+cmdline_args.mgmt_node)
 
     for node in all_nodes:
-        if pacemaker_major_number == 1:
-            run('pcs resource create '+node+' ocf:pacemaker:remote'+' server=e'+node+
-                ' reconnect_interval=60')
-        if pacemaker_major_number == 2:
-            run('pcs resource create --force '+node+' ocf:pacemaker:remote'+' server=e'+node+
-                ' reconnect_interval=60')
+        run('pcs resource create '+node+' ocf:pacemaker:remote'+' server=e'+node+
+            ' reconnect_interval=60')
         run('pcs constraint location '+node+' prefers '+cmdline_args.mgmt_node)
 
     for zpool in zpool_order:
