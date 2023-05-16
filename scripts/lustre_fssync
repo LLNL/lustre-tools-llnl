@@ -1,0 +1,526 @@
+#!/bin/bash
+# Copyright (c) 2023, Lawrence Livermore National Security, LLC.
+# Produced at the Lawrence Livermore National Laboratory.
+# Written by Cameron Harr <charr@llnl.gov>
+# LLNL-CODE-849188
+#
+# This file is part of lustre-tools-llnl.
+#
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License (as published by the
+# Free Software Foundation) version 3, dated June 29, 2007.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the IMPLIED WARRANTY OF
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# terms and conditions of the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software Foundation,
+# Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+# This script is a semi-automated way to sync one Lustre f/s to another.
+# This assumes we have a file system with lots of "user" directories
+# at the root. The script will go through and pre-create the user dir
+# on the destination f/s assigning it to an MDT using a round-robin
+# placement algorithm. Then Slurm dsync jobs will be submitted for
+# each user dir, possibly with number of CPUs scaled per size of dir.
+
+srcfs=""
+dstfs=""
+batch=50000
+compare=""
+delete=""
+# Associative array to store heaviest users' inode usages
+declare -a topUsers=()
+declare -a topInodeCounts=()
+declare -a regusers=()
+## Arrays each have $nummdts "buckets, one holding # inodes
+## and the other holding the heavy users going on that MDT. The inode
+## bucket will simply hold the sum of inodes in that bucket whereas
+## the user bucket will hold a string of names in that bucket.
+declare -a inodebucket=()
+declare -a userbucket=()
+declare -A projdirs=()
+nummdts=-1
+verbose=0
+mdreport=0
+
+# Create and submit Slurm job
+create_job(){
+    user=$1
+    # We pass in CPUs here instead of taking the global value in order
+    # to allow for large runs with heavy users
+    local numcpus=$2
+    if [[ -z "${user}" ]]; then
+        echov "WARNING: Invalid user in create_job()"
+        return
+    else
+        cat > "${workdir}/${user}.dsync.sbatch" << EOF
+#!/bin/bash
+#SBATCH -J ${user}_sync
+#SBATCH -p ${partition}
+#SBATCH -n ${numcpus}
+#SBATCH -t 12-00:00:00
+#SBATCH -o ${workdir}/${user}.dsync.out
+srun -n ${numcpus} dsync -b ${batch} ${compare} ${delete} -P -s --progress 1800 -v /p/${srcfs}/${user} /p/${dstfs}/${user}
+EOF
+
+        if [ ! -r "$workdir/${user}.dsync.sbatch" ]; then
+            echo "Can't read $workdir/${user}.dsync.sbatch"
+        fi
+
+        # Ensure there isn't already a previous job running for user
+        local dep=""
+        pres_job=$(squeue -hp "${partition}" --format="%i %j"| grep -w "${user}_sync" |sort -n -k1 | tail -1 | awk '{print $1}')
+        if [ -n "${pres_job}" ]; then
+            dep="-d afterany:${pres_job}"
+            job=$(sbatch -p "${partition}" -n "${numcpus}" "${dep}" "$workdir/${user}.dsync.sbatch" | awk '{print $4}')
+        else
+            job=$(sbatch -p "${partition}" -n "${numcpus}" "$workdir/${user}.dsync.sbatch" | awk '{print $4}')
+        fi
+        echo -n "    - Submitted job for ${user}: "
+        echo -n "${job}"
+        echov ""
+        echov "       |-- sbatch -p ${partition} -n ${numcpus} ${dep} $workdir/${user}.dsync.sbatch"
+    fi
+}
+
+# Precreate user dirs, spreading load across MDTs
+create_user_dirs() {
+    nummdts=$(get_num_mdts)
+    existed=""
+
+    # First try to spread out the heavy users
+    ## Determine MDT bucket for heavy users by summing up all
+    ## inodes of heavy users, then putting the heaviest $nummdts
+    ## users in their own buckets. Keep track of each bucket's
+    ## weight and as we move down the sorted list of users, we
+    ## put the next user in the lightest bucket.
+
+    if [[ "$debug" -eq 1 ]]; then
+        echo 'Dumping @topusers'
+        declare -p topUsers
+        echo 'Dumping @topInodeCounts'
+        declare -p topInodeCounts
+    fi
+    # topUsers should already be sorted. Populate the first $nummdts users
+    for idx in $(seq 0 $((nummdts-1))); do
+        userbucket[$idx]="${userbucket[$idx]} ${topUsers[$idx]}"
+        if [[ ! -z ${inodebucket[$idx]} ]]; then
+            inodebucket[$idx]=$((${inodebucket[$idx]} + ${topInodeCounts[$idx]}))
+        else
+            inodebucket[$idx]=${topInodeCounts[$idx]}
+        fi
+    done
+    ## Initially, the last bucket is the lightest
+    lightest=$((nummdts-1))
+    if [[ "$debug" -eq 1 ]]; then
+        echo "Dumping first run of inodebucket"
+        declare -p inodebucket
+    fi
+    # Now loop through rest of heavy users and assign to lightest bucket
+    for u in $(seq "$nummdts" $((${#topUsers[@]}-1))); do
+        echod "Lightest is $lightest"
+        userbucket[$lightest]="${userbucket[$lightest]} ${topUsers[$u]}"
+        inodebucket[$lightest]=$((${inodebucket[$lightest]} + ${topInodeCounts[$u]}))
+        if [[ "$debug" -eq 1 ]]; then
+            echo "Dumping first run of inodebucket"
+            declare -p inodebucket
+        fi
+        # Update lightest
+        lightest=$(find_lightest $lightest)
+    done
+
+    # Now create user_directories, starting with the heavy users
+    echo "  * Creating user directories on ${nummdts} MDTs..."
+    echo "    - Balancing heavy users across MDTs..."
+    for mdt in "${!userbucket[@]}"; do
+        echo "      - MDT $mdt: ${inodebucket[$mdt]} inodes"
+        # Check if we are just printing MDT report
+        if [[ $mdreport != 1 ]]; then
+            for user in ${userbucket[$mdt]}; do
+                if [[ -z $user ]]; then
+                    echov "WARNING: user is NULL"
+                    continue
+                fi
+                userdir="/p/${dstfs}/${user}"
+                if [ ! -d "${userdir}" ]; then
+                    echov "      ... $user"
+                    echod "        - lfs mkdir -i ${mdt} ${userdir}"
+                    lfs mkdir -i "${mdt}" "${userdir}"
+                else
+                    existed="${existed} ${userdir}"
+                    continue
+                fi
+            done
+        fi
+    done
+
+    # If we're just printing the report, we can exit now
+    if [[ $mdreport == 1 ]]; then
+        return
+    fi
+
+    # Now randomly round-robin allocate the rest of the users, starting with project dirs
+    # We don't know inode count in proj dir, so we can't "balance" them
+    echo "    - Spreading project dirs across MDTs..."
+    for user in "${!projdirs[@]}"; do
+        if [[ -z $user ]]; then
+            echov "WARNING: user is NULL"
+            continue
+        fi
+        userdir="/p/${dstfs}/${user}"
+        if [ ! -d "${userdir}" ]; then
+            echov "      ... $user"
+            randmdt=$((RANDOM%nummdts))
+            echod "      - lfs mkdir -i ${randmdt} ${userdir}"
+            lfs mkdir -i "${randmdt}" "${userdir}"
+        else
+            existed="${existed} ${userdir}"
+            continue
+        fi
+    done
+    echo "    - Spreading remaining users across MDTs..."
+    for user in "${regusers[@]}"; do
+        if [[ -z $user ]]; then
+            echov "WARNING: user is NULL"
+            continue
+        fi
+        userdir="/p/${dstfs}/${user}"
+        if [ ! -d "${userdir}" ]; then
+            echov "      ... $user"
+            randmdt=$((RANDOM%nummdts))
+            echod "      - lfs mkdir -i ${randmdt} ${userdir}"
+            lfs mkdir -i "${randmdt}" "${userdir}"
+        else
+            existed="${existed} ${userdir}"
+            continue
+        fi
+    done
+    if [ -n "${existed}" ]; then
+        echov "    The following user directories already existed: ${existed}"
+    fi
+}
+
+echoerr() {
+    printf "%s\n" "$*" >&2
+}
+
+echod() {
+    if [[ ${debug} == 1 ]]; then
+        printf "%s\n" "$*" >&2
+    fi
+}
+
+echov() {
+    if [[ ${verbose} == 1 ]]; then
+        printf "%s\n" "$*" >&2
+    fi
+}
+
+get_uid() {
+    uname=$1
+    if [ -n "$1" ]; then
+        uid=$(/bin/ldapsearch -Q -LLL -H ldaps://dir-server.llnl.gov -b ou=accounts,ou=lc,dc=llnl,dc=gov uid="${uname}" | grep uidNumber |awk '{print $2}')
+        echo "${uid}"
+    else
+        echo "-2"
+    fi
+}
+
+find_lightest() {
+    # Find array index with lightest value
+    lightest=$1
+    for l in "${!inodebucket[@]}"; do
+        if [[ ${inodebucket[$l]} -lt ${inodebucket[$lightest]} ]]; then
+            lightest=${l}
+        fi
+    done
+    echo "$lightest"
+}
+
+# How many MDTs do we have
+get_num_mdts(){
+    # Get f/s device name
+    fsdev=$(grep -w "/p/${dstfs}" /proc/mounts | cut -d' ' -f1 | cut -d'/' -f2)
+    nummdts=$(lctl dl | grep -coP -- "${fsdev}-MDT[0-9a-fA-F]+")
+    if [[ ${nummdts} -le 0 ]]; then
+        echoerr "Invalid number of MDTs"
+        exit -1
+    else echo "${nummdts}"
+    fi
+}
+
+get_projdirs(){
+    # Because user quotas are based on a user's files across an entire f/s,
+    # there are cases where a user may be storing large amounts in a different
+    # directory than their own. Just grabbing a heavy user's user directory can
+    # miss these files. To solve that, we will identify project directories and
+    # and treat them as heavy user directories so they are handled early on.
+    # We won't be able to balance it on an MDT w/o doing a walk of the directory,
+    # but as that can be too expensive, we will randomly allocate them.
+
+    # Here we determine a project directory by if uid != gid.
+    awk '$2 !=$3 {print $1}'
+}
+
+get_usages() {
+    declare -A tempArray=()
+    declare -a excludes=()
+    # Inode threshold
+    ithreshold=${ithreshold:=1000000}
+    # Capacity threshold (KB). Default=20TB
+    cthreshold=${cthreshold:=20}
+    scanfs=$1
+    i=0
+
+    # First get a KRB ticket so we can do LDAP lookups
+    if ! kinit -k -t /etc/krb5.keytab; then
+        echoerr "Unable to obtain Kerberos ticket for LDAP. Aborting..."
+    fi
+
+    # Read in list of users, along with uid/gid. Stor this
+    # in a tmp file since BASH doesn't have a multi-dimensional array
+    listfile=$(mktemp -p "${workdir}")
+    # Use stat to grab UID/GID and filter out leading f/s path
+    find /p/"${srcfs}"/* -maxdepth 0 -type d -exec stat -c "%n %u %g" '{}' \; 2> /dev/null | cut -d'/' -f4- >"${listfile}"
+
+    # Now create list of user dirs that are actually project/group dirs and assign 0 inodes
+    echo "  * Collecting Project/Group directories..."
+    for proj in $(awk '$2 !=$3 {print $1}' "${listfile}"); do
+        #echov "    - ${proj}"
+        projdirs[$proj]=0
+    done
+    # Load list of excluded users into array
+    if [ -n "${excl_file}" ]; then
+        if [ -r "${excl_file}" ]; then
+            readarray -t excludes < "${excl_file}"
+        else
+            echo "Unable to read ${excl_file}."
+            exit 1
+        fi
+    fi
+    # Get list of top users > 20M inodes by scanning users' usages, then sort into indexed array
+    echo "  * Finding heavy users..."
+    for user in $(awk '{print $1}' "${listfile}"); do
+        # Check if user should be excluded
+        if printf '%s\n' "${excludes[@]}" | grep -qw "${user}"; then
+           echov "    - Excluding ${user}..."
+           continue
+        fi
+        # See if it's a project directory and continue if so
+        if [[ -z  ${projdirs[$user]} ]]; then
+            local inodes=-1
+            # Translate to UID to capture users not on the system running this script
+            uid=$(get_uid "${user}")
+            quota=$(lfs quota -qu "$uid" /p/"${scanfs}" 2>/dev/null)
+            # Convert quota capacity, in KB, to TB
+            let cap=$(echo "${quota}" | head -n1 | awk '{print $2}'|tr -d '*')/1024/1024/1024
+            inodes=$(echo "${quota}" | head -n1 | awk '{print $6}'|tr -d '*')
+            # Build list of users with high inode count or capacity and add to array
+            if [[ ${inodes} -ge ${ithreshold} ]] || [[ ${cap} -ge ${cthreshold} ]]; then
+                echod "    - $user: i:${inodes} c:${cap}T"
+                tempArray[$user]=${inodes}
+            else
+                regusers+=($user)
+            fi
+        else
+            continue
+        fi
+    done
+    OIFS=$IFS
+    IFS=' '
+    while read k v; do
+        topUsers[$i]=$k
+        topInodeCounts[$i]=$v
+        let i=$i+1
+    done <<< $(for key in "${!tempArray[@]}"; do echo "$key ${tempArray[$key]}"; done | sort -n -r -k2)
+    IFS=$OIFS
+    rm "$listfile"
+}
+
+setpfl(){
+    if [ ! -n "${NODOM}" ]; then
+        echo "  * Setting DoM && PFL on /p/${dstfs}/"
+        lfs setstripe -E 64K -L mdt -E 16M -c 1 -S1M -E 1G -c 2 -E 4G -c 4 -E 16G -c 8 -E 64G -c 16 -E -1 -c -1 /p/${dstfs}/
+    fi
+}
+
+sync_data(){
+    maxjobs=${maxjobs:=$nummdts}
+    local numcpus=${numcpus:=64}
+    local heavycpus=$((numcpus * 2))
+    currjobs=0
+
+    echo "  * Submitting user sync jobs. This will spin until all jobs are complete..."
+
+    # maxlen= max users on an MDT
+    maxlen=1
+    for mdt in "${!userbucket[@]}"; do
+        numusers=$(echo "${userbucket[$mdt]}" | wc -w)
+        if [[ $numusers -gt $maxlen ]]; then
+            maxlen=$numusers
+        fi
+    done
+    # First loop through the list of project dirs and submit a job for each. We don't know the size of these, but they
+    # have the potential to be quite large.
+    for user in "${!projdirs[@]}"; do
+        currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+        if [[ ! -z ${user} ]]; then
+            if [[ $currjobs -lt $maxjobs ]]; then
+                create_job ${user} ${heavycpus}
+            else
+                # Spin until currjobs is less than max jobs.
+                while [[ $currjobs -ge $maxjobs ]]; do
+                   sleep 10
+                   currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+                done
+                create_job ${user} ${heavycpus}
+            fi
+        fi
+    done
+    # We'll loop through the list of MDTs with heavy users and for each MDT, submit a job for user X until X=maxlen
+    for useridx in $(seq 1 $((maxlen))); do
+        for mdt in "${!userbucket[@]}"; do
+            currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+            # We don't have 2D arrays in bash, so to get the user out, we'll use awk
+            user=$(echo "${userbucket[$mdt]}" | awk -v idx="$useridx" '{print $idx}')
+            if [[ ! -z ${user} ]]; then
+                if [[ $currjobs -lt $maxjobs ]]; then
+                    create_job "${user}" "${heavycpus}"
+                else
+                    # Spin until currjobs is less than max jobs.
+                    while [[ $currjobs -ge $maxjobs ]]; do
+                       sleep 10
+                       currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+                    done
+                    create_job "${user}" "${heavycpus}"
+                fi
+            fi
+        done
+    done
+    # Now we'll loop through regusers[] to sync the smaller directories
+    for user in "${regusers[@]}"; do
+        currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+        if [[ ! -z ${user} ]]; then
+            if [[ $currjobs -lt $maxjobs ]]; then
+                create_job "${user}" "${numcpus}"
+            else
+                # Spin until currjobs is less than max jobs.
+                while [[ $currjobs -ge $maxjobs ]]; do
+                   sleep 10
+                   currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+                done
+                create_job "${user}" "${numcpus}"
+            fi
+        fi
+    done
+    # By  now we should have looped through all users
+    echo "Sync complete!"
+}
+
+usage(){
+    echo "$0 [-h] -s <source f/s> -d <dest f/s> [-c] [-D] [-e <exclude.file>] [-m <#jobs>] [-n <# CPUs/job>] [-p partition] [-t <#inodes>] [-N]"
+    echo -e "\t-h: This menu."
+    echo -e "\t-s: The mount name of the source file system, e.g. lustre1."
+    echo -e "\t-d: The mount name of the destination file system, e.g. lustre4."
+    echo -e "\t-b: # of files in sync batch. Default=50000"
+    echo -e "\t-c: Threshold of capacity in TB defining a heavy user. Default=20"
+    echo -e "\t-C: Compare file contents between Src & Dest. This will take longer."
+    echo -e "\t-D: Delete extraneous files from destination."
+    echo -e "\t-e: File name with list of users to exclude"
+    echo -e "\t-i: Threshold of number of inodes defining a heavy user. Default=1000000."
+    echo -e "\t-m: Maximum number of sync jobs. Default=<# of MDTs>."
+    echo -e "\t-M: Only report the calculated MDT balancing. No syncing is done."
+    echo -e "\t-n: Number of CPUs per sync job. Default=64."
+    echo -e "\t-N: Do not enable PFL and DoM. Default enables them on root of destination f/s."
+    echo -e "\t-p: Slurm Partition to submit to. Default is 'putil'."
+    echo -e "\t-v: Verbose -- display more messages"
+    echo -e "\t-V: Debug -- display even more messages"
+}
+
+#####  MAIN #####
+
+while getopts 'b:Cc:Dd:e:hi:Mm:n:Np:s:Vv' opt; do
+    case $opt in
+        'b')batch=${OPTARG};;
+        'c')cthreshold=$((OPTARG*1024*1024*1024));;
+        'C')compare="-c";;
+        'D')delete="-D";;
+        'd')dstfs=$(basename "${OPTARG}");;
+        'e')excl_file=${OPTARG};;
+        'h')usage
+            exit 0;;
+        'i')ithreshold=${OPTARG};;
+        'M')mdreport=1;;
+        'm')maxjobs=${OPTARG};;
+        'n')numcpus=${OPTARG};;
+        'N')NODOM=1;;
+        'p')partition=${OPTARG};;
+        's')srcfs=$(basename "${OPTARG}");;
+        'V')debug=1;;
+        'v')verbose=1;;
+        \?) echoerr "Invalid option: -${OPTARG}" >&2
+            usage
+            exit 1;;
+        :) echoerr "Option -${OPTARG} requires an argument." >&2
+            usage
+            exit 1;;
+    esac
+done
+
+if ! grep -q "${srcfs}" /proc/mounts || ! grep -q "${dstfs}" /proc/mounts; then
+    echoerr "Missing source or destination file system name"
+    usage
+    exit 1
+fi
+
+partition=${partition:=putil}
+if ! scontrol show partition "${partition}" &>/dev/null; then
+   echoerr "Invalid partition: ${partition}"
+   exit 1
+fi
+
+# Verify dsync is in path
+if ! type -P dsync >/dev/null; then
+    echoerr 'Aborting...dsync not in path!'
+    exit 1
+fi
+
+echov "CMD: $0 $*"
+echo "Preparing to sync ${srcfs} to ${dstfs} via the $partition partition..."
+begintime=$(date +%s)
+workdir="fssync_$$"
+mkdir ${workdir}
+if [[ $? -ne 0 ]]; then
+    echoerr "ERROR: Could not create work dir ${workdir}"
+    exit 1
+fi
+# First get inode usages for top users
+get_usages "${srcfs}"
+# Set up PFL/DoM
+setpfl
+# Next, pre-create user/group directories
+create_user_dirs
+if [[ $mdreport == 1 ]]; then
+    exit 0
+fi
+# Start file sync
+sync_data
+# Wait for jobs to finish
+echo "Waiting for sync jobs to finish..."
+# Spin until no more sync jobs
+syncjobs=$(squeue -hp "${partition}" -u root 2>/dev/null | wc -l)
+while [[ $syncjobs -gt 0 ]]; do
+   sleep 15
+   syncjobs=$(squeue -hp "${partition}" -u root 2>/dev/null | wc -l)
+done
+
+endtime=$(date +%s)
+tottime=$((endtime-begintime))
+days=$((tottime / 86400))
+hours=$(((tottime % 86400) / 3600))
+min=$((((tottime % 86400) % 3600) / 60 ))
+sec=$(((((tottime % 86400) % 3600) % 60 )))
+echo "Total runtime: ${days}-${hours}:${min}:${sec}"
