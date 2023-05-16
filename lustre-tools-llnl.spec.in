@@ -2,7 +2,7 @@ Summary: Miscellaneous lustre tools from LLNL
 Name: @PACKAGE_NAME@
 Version: @PACKAGE_VERSION@
 Release: 1%{?dist}
-License: GPL
+License: GPL-2.0
 Group: System Environment/Base
 URL: https://github.com/llnl/lustre-tools-llnl
 Packager: Christopher J. Morrone <morrone2@llnl.gov>
