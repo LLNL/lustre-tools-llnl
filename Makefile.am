@@ -8,4 +8,4 @@
 # LLNL-CODE-468512
 
 SUBDIRS = src scripts doc
-EXTRA_DIST = COPYING lustre-tools-llnl.spec
+EXTRA_DIST = NOTICE LICENSE-GPL-2.0 LICENSE-GPL-3.0 lustre-tools-llnl.spec
