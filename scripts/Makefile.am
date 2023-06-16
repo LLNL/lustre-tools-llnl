@@ -7,7 +7,7 @@
 # Produced at the Lawrence Livermore National Laboratory.
 # LLNL-CODE-468512
 
-dist_sbin_SCRIPTS = lflush lustre_quota_summary zfsobj2fid ldev2pcs llogcolor
+dist_sbin_SCRIPTS = lflush lustre_quota_summary zfsobj2fid ldev2pcs llogcolor lustre_fssync
 
 resourceagentdir = ${prefix}/lib/ocf/resource.d/llnl
 dist_resourceagent_SCRIPTS = lustre zpool
