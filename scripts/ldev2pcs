@@ -42,6 +42,9 @@ def get_pacemaker_major_number():
     return int(captured_major_number.group('major'))
 
 def file_regex_replace(regex, replacement, path):
+    if cmdline_args.dry_run:
+        return
+
     '''Replace all instances of regex with replacement
     for the the file at path.
     '''
