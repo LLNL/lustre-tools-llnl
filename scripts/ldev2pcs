@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 # This file is part of lustre-tools-llnl.
 #
@@ -22,7 +22,7 @@ zpool_order = []
 all_lustre_services = {}
 lustre_service_order = []
 
-skip_pattern = re.compile('^\s*(#.*)?\n?$')
+skip_pattern = re.compile(r'^\s*(#.*)?\n?$')
 def should_skip(line):
     """Returns true is the line contains only a comment or whitespace"""
     if skip_pattern.match(line):
@@ -33,9 +33,10 @@ def get_pacemaker_major_number():
     '''Get the rpm major number of pacemaker,
     and return as an int.
     '''
-    rpm_version = subprocess.check_output(
-        ['rpm', '-q', 'pacemaker']
-    ).strip()
+    rpm_version = subprocess.run(
+        ['rpm', '-q', 'pacemaker'],
+        stdout=subprocess.PIPE,
+    ).stdout.decode().strip()
 
     captured_major_number = re.match(r'pacemaker-(?P<major>\d+).*$', rpm_version)
 
@@ -109,7 +110,7 @@ def deduce_cluster_name():
     return node.rstrip('0123456789')
 
 def run(cmd):
-    print cmd
+    print(cmd)
 
     if cmdline_args.dry_run:
         return
@@ -117,11 +118,11 @@ def run(cmd):
     try:
         rc = subprocess.call(cmd, shell=True)
         if rc < 0:
-            print >>sys.stderr, "Child was terminated by signal", -rc
+            print("Child was terminated by signal", -rc, file=sys.stderr)
         elif rc > 0:
-            print >>sys.stderr, "Error: ", rc
+            print("Error: ", rc, file=sys.stderr)
     except OSError as e:
-        print >>sys.stderr, "Execution failed:", e
+        print("Execution failed:", e, file=sys.stderr)
 
 def configure_location(resource, nodes, fixed_score_string=None):
     if fixed_score_string is None:
