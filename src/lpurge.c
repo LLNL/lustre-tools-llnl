@@ -48,7 +48,7 @@
 #include <signal.h>
 #include <sys/sysmacros.h>
 
-#include <lustre/lustre_user.h>
+#include <linux/lustre/lustre_user.h>
 
 struct elist_struct {
         char **paths;
@@ -611,9 +611,6 @@ purge(const char *path, time_t thresh, struct elist_struct *elist,
         return inode_count;
 }
 
-#ifdef HAVE_LINUX_LUSTRE_LUSTRE_USER_H
-
-/* Lustre >= 2.12 */
 static int
 llapi_stat_mds(int fd, char *fname, struct stat *sb)
 {
@@ -658,53 +655,6 @@ llapi_stat_mds(int fd, char *fname, struct stat *sb)
 done:
         return ret;
 }
-
-#else
-
-/* Lustre < 2.12 */
-static int
-llapi_stat_mds(int fd, char *fname, struct stat *sb)
-{
-        const size_t bufsize = MAX(MAXPATHLEN,
-                                   sizeof(struct lov_user_mds_data_v3) +
-                                   sizeof(struct lov_user_ost_data_v1) * 2000);
-        char buf[bufsize];
-        lstat_t *ls = &((struct lov_user_mds_data *)buf)->lmd_st;
-        int ret = -1;
-
-        if (strlen(fname) >= bufsize) {
-                errno = EINVAL;
-                goto done;
-        }
-
-        /* Usage: ioctl(fd, IOC_MDC_GETFILEINFO, buf)
-         * IN:  fd   open file descriptor of file's parent directory
-         * IN:  buf  file name (no path)
-         * OUT: buf  lstat_t
-         */
-        strncpy(buf, fname, bufsize);
-        if ((ret = ioctl(fd, IOC_MDC_GETFILEINFO, buf)) < 0)
-                goto done;
-
-        /* Copy 'lstat_t' to 'struct stat'
-         */
-        sb->st_dev     = ls->st_dev;
-        sb->st_ino     = ls->st_ino;
-        sb->st_mode    = ls->st_mode;
-        sb->st_nlink   = ls->st_nlink;
-        sb->st_uid     = ls->st_uid;
-        sb->st_gid     = ls->st_gid;
-        sb->st_rdev    = ls->st_rdev;
-        sb->st_size    = ls->st_size;
-        sb->st_blksize = ls->st_blksize;
-        sb->st_blocks  = ls->st_blocks;
-        sb->st_atime   = ls->st_atime;
-        sb->st_mtime   = ls->st_mtime;
-        sb->st_ctime   = ls->st_ctime;
-done:
-        return ret;
-}
-#endif
 
 static int
 is_lustre_fs(const char *path)
