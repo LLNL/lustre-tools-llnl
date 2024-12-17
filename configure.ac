@@ -45,13 +45,6 @@ AS_IF([test "x$enable_dist" = "xno"], [
 # Checks for programs.
 AC_PROG_CC
 
-# Check for headers
-lustre_user=no
-AC_CHECK_HEADERS([linux/lustre/lustre_user.h], [lustre_user=linux], [])
-AC_CHECK_HEADERS([lustre/lustre_user.h], [lustre_user=lustre], [])
-AS_IF([test "x$lustre_user" = "xno"],
-        [AC_MSG_ERROR([lustre header not found])])
-
 ]) dnl enable_dist
 
 AC_CONFIG_FILES([lustre-tools-llnl.spec
