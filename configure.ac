@@ -10,7 +10,7 @@
 # Produced at the Lawrence Livermore National Laboratory.
 # LLNL-CODE-468512
 
-AC_INIT([lustre-tools-llnl], [1.8.25])
+AC_INIT([lustre-tools-llnl], [1.8.26])
 AC_CONFIG_AUX_DIR([config])
 AC_CONFIG_SRCDIR([src/lpurge.c])
 AC_CONFIG_HEADER([config.h])
