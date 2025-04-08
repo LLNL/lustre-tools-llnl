@@ -31,6 +31,13 @@ dstfs=""
 batch=50000
 compare=""
 delete=""
+directio=""
+mdreport=0
+nummdts=-1
+sparse=""
+used_nodes_check=0
+verbose=0
+
 # Associative array to store heaviest users' inode usages
 declare -a topUsers=()
 declare -a topInodeCounts=()
@@ -42,9 +49,6 @@ declare -a regusers=()
 declare -a inodebucket=()
 declare -a userbucket=()
 declare -A projdirs=()
-nummdts=-1
-verbose=0
-mdreport=0
 
 # Create and submit Slurm job
 create_job(){
@@ -58,12 +62,12 @@ create_job(){
     else
         cat > "${workdir}/${user}.dsync.sbatch" << EOF
 #!/bin/bash
-#SBATCH -J ${user}_sync
-#SBATCH -p ${partition}
-#SBATCH -n ${numcpus}
-#SBATCH -t 12-00:00:00
-#SBATCH -o ${workdir}/${user}.dsync.out
-srun -n ${numcpus} dsync -b ${batch} ${compare} ${delete} -P -s --progress 1800 -v /p/${srcfs}/${user} /p/${dstfs}/${user}
+#SBATCH --job-name ${user}_sync
+#SBATCH --partition ${partition}
+#SBATCH --ntasks ${numcpus}
+#SBATCH --time 12-00:00:00
+#SBATCH --output ${workdir}/${user}.dsync.out
+srun --ntasks ${numcpus} dsync --batch-files ${batch} ${compare} ${delete} --no-dereference --progress 1800 ${sparse} ${directio} --verbose /p/${srcfs}/${user} /p/${dstfs}/${user}
 EOF
 
         if [ ! -r "$workdir/${user}.dsync.sbatch" ]; then
@@ -72,17 +76,17 @@ EOF
 
         # Ensure there isn't already a previous job running for user
         local dep=""
-        pres_job=$(squeue -hp "${partition}" --format="%i %j"| grep -w "${user}_sync" |sort -n -k1 | tail -1 | awk '{print $1}')
+        pres_job=$(squeue --noheader --partition "${partition}" --format="%i %j"| grep -w "${user}_sync" |sort -n -k1 | tail -1 | awk '{print $1}')
         if [ -n "${pres_job}" ]; then
-            dep="-d afterany:${pres_job}"
-            job=$(sbatch -p "${partition}" -n "${numcpus}" "${dep}" "$workdir/${user}.dsync.sbatch" | awk '{print $4}')
+            dep="--depend=afterany:${pres_job}"
+            job=$(sbatch --partition "${partition}" --ntasks "${numcpus}" "${dep}" "$workdir/${user}.dsync.sbatch" | awk '{print $4}')
         else
-            job=$(sbatch -p "${partition}" -n "${numcpus}" "$workdir/${user}.dsync.sbatch" | awk '{print $4}')
+            job=$(sbatch --partition "${partition}" --ntasks "${numcpus}" "$workdir/${user}.dsync.sbatch" | awk '{print $4}')
         fi
-        echo -n "    - Submitted job for ${user}: "
+        echo -n "    - $(date +'%Y-%m-%d %H:%M:%S') Submitted job for ${user}: "
         echo -n "${job}"
         echov ""
-        echov "       |-- sbatch -p ${partition} -n ${numcpus} ${dep} $workdir/${user}.dsync.sbatch"
+        echov "       |-- sbatch --partition ${partition} --ntasks ${numcpus} ${dep} $workdir/${user}.dsync.sbatch"
     fi
 }
 
@@ -147,8 +151,8 @@ create_user_dirs() {
                 userdir="/p/${dstfs}/${user}"
                 if [ ! -d "${userdir}" ]; then
                     echov "      ... $user"
-                    echod "        - lfs mkdir -i ${mdt} ${userdir}"
-                    lfs mkdir -i "${mdt}" "${userdir}"
+                    echod "        - lfs mkdir --mdt-index ${mdt} ${userdir}"
+                    lfs mkdir --mdt-index="${mdt}" "${userdir}"
                 else
                     existed="${existed} ${userdir}"
                     continue
@@ -174,8 +178,8 @@ create_user_dirs() {
         if [ ! -d "${userdir}" ]; then
             echov "      ... $user"
             randmdt=$((RANDOM%nummdts))
-            echod "      - lfs mkdir -i ${randmdt} ${userdir}"
-            lfs mkdir -i "${randmdt}" "${userdir}"
+            echod "      - lfs mkdir --mdt-index=${randmdt} ${userdir}"
+            lfs mkdir --mdt-index="${randmdt}" "${userdir}"
         else
             existed="${existed} ${userdir}"
             continue
@@ -191,8 +195,8 @@ create_user_dirs() {
         if [ ! -d "${userdir}" ]; then
             echov "      ... $user"
             randmdt=$((RANDOM%nummdts))
-            echod "      - lfs mkdir -i ${randmdt} ${userdir}"
-            lfs mkdir -i "${randmdt}" "${userdir}"
+            echod "      - lfs mkdir --mdt-index=${randmdt} ${userdir}"
+            lfs mkdir --mdt-index="${randmdt}" "${userdir}"
         else
             existed="${existed} ${userdir}"
             continue
@@ -263,6 +267,19 @@ get_projdirs(){
 
     # Here we determine a project directory by if uid != gid.
     awk '$2 !=$3 {print $1}'
+}
+
+# if no used_nodes_check (set to 0)
+#   get the number of jobs in the partition
+# else (if -u option used_nodes_check is set to 1 (or non-zero))
+#   get the number of nodes that are being used in jobs owned by root
+#   and ending in "_sync" and in the partition
+get_current_jobs_or_nodes(){
+    if [[ "${used_nodes_check}" == 0 ]]; then
+        squeue --noheader --partition "${partition}" --user root | wc -l
+    else
+        squeue --noheader --partition "${partition}" --user root --format="%j %D" | awk 'BEGIN {sum = 0} /_sync / {sum += $NF} END {print sum}'
+    fi
 }
 
 get_usages() {
@@ -343,15 +360,22 @@ get_usages() {
 setpfl(){
     if [ ! -n "${NODOM}" ]; then
         echo "  * Setting DoM && PFL on /p/${dstfs}/"
-        lfs setstripe -E 64K -L mdt -E 16M -c 1 -S1M -E 1G -c 2 -E 4G -c 4 -E 16G -c 8 -E 64G -c 16 -E -1 -c -1 /p/${dstfs}/
+        lfs setstripe --component-end 64K --layout mdt \
+                      --component-end 16M --stripe-count 1 --stripe-size 1M \
+                      --component-end 1G --stripe-count 2 \
+                      --component-end 4G --stripe-count 4 \
+                      --component-end 16G --stripe-count 8 \
+                      --component-end 64G --stripe-count 16 \
+                      --component-end -1 --stripe-count -1 \
+                      /p/${dstfs}/
     fi
 }
 
 sync_data(){
-    maxjobs=${maxjobs:=$nummdts}
+    maxjobs_or_nodes=${maxjobs_or_nodes:=$nummdts}
     local numcpus=${numcpus:=64}
     local heavycpus=$((numcpus * 2))
-    currjobs=0
+    currjobs_or_nodes=0
 
     echo "  * Submitting user sync jobs. This will spin until all jobs are complete..."
 
@@ -366,15 +390,15 @@ sync_data(){
     # First loop through the list of project dirs and submit a job for each. We don't know the size of these, but they
     # have the potential to be quite large.
     for user in "${!projdirs[@]}"; do
-        currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+        currjobs_or_nodes=$(get_current_jobs_or_nodes)
         if [[ ! -z ${user} ]]; then
-            if [[ $currjobs -lt $maxjobs ]]; then
+            if [[ $currjobs_or_nodes -lt $maxjobs_or_nodes ]]; then
                 create_job ${user} ${heavycpus}
             else
-                # Spin until currjobs is less than max jobs.
-                while [[ $currjobs -ge $maxjobs ]]; do
+                # Spin until currjobs_or_nodes is less than maxjob_or_nodes.
+                while [[ $currjobs_or_nodes -ge $maxjobs_or_nodes ]]; do
                    sleep 10
-                   currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+                   currjobs_or_nodes=$(get_current_jobs_or_nodes)
                 done
                 create_job ${user} ${heavycpus}
             fi
@@ -383,17 +407,17 @@ sync_data(){
     # We'll loop through the list of MDTs with heavy users and for each MDT, submit a job for user X until X=maxlen
     for useridx in $(seq 1 $((maxlen))); do
         for mdt in "${!userbucket[@]}"; do
-            currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+            currjobs_or_nodes=$(get_current_jobs_or_nodes)
             # We don't have 2D arrays in bash, so to get the user out, we'll use awk
             user=$(echo "${userbucket[$mdt]}" | awk -v idx="$useridx" '{print $idx}')
             if [[ ! -z ${user} ]]; then
-                if [[ $currjobs -lt $maxjobs ]]; then
+                if [[ $currjobs_or_nodes -lt $maxjobs_or_nodes ]]; then
                     create_job "${user}" "${heavycpus}"
                 else
-                    # Spin until currjobs is less than max jobs.
-                    while [[ $currjobs -ge $maxjobs ]]; do
+                    # Spin until currjobs_or_nodes is less than maxjob_or_nodes.
+                    while [[ $currjobs_or_nodes -ge $maxjobs_or_nodes ]]; do
                        sleep 10
-                       currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+                       currjobs_or_nodes=$(get_current_jobs_or_nodes)
                     done
                     create_job "${user}" "${heavycpus}"
                 fi
@@ -402,15 +426,15 @@ sync_data(){
     done
     # Now we'll loop through regusers[] to sync the smaller directories
     for user in "${regusers[@]}"; do
-        currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+        currjobs_or_nodes=$(get_current_jobs_or_nodes)
         if [[ ! -z ${user} ]]; then
-            if [[ $currjobs -lt $maxjobs ]]; then
+            if [[ $currjobs_or_nodes -lt $maxjobs_or_nodes ]]; then
                 create_job "${user}" "${numcpus}"
             else
-                # Spin until currjobs is less than max jobs.
-                while [[ $currjobs -ge $maxjobs ]]; do
+                # Spin until currjobs_or_nodes is less than maxjob_or_nodes.
+                while [[ $currjobs_or_nodes -ge $maxjobs_or_nodes ]]; do
                    sleep 10
-                   currjobs=$(squeue -hp "${partition}" -u root | wc -l)
+                   currjobs_or_nodes=$(get_current_jobs_or_nodes)
                 done
                 create_job "${user}" "${numcpus}"
             fi
@@ -421,44 +445,52 @@ sync_data(){
 }
 
 usage(){
-    echo "$0 [-h] -s <source f/s> -d <dest f/s> [-c] [-D] [-e <exclude.file>] [-m <#jobs>] [-n <# CPUs/job>] [-p partition] [-t <#inodes>] [-N]"
-    echo -e "\t-h: This menu."
-    echo -e "\t-s: The mount name of the source file system, e.g. lustre1."
-    echo -e "\t-d: The mount name of the destination file system, e.g. lustre4."
+    echo "$0 [-h] -s <source f/s> -d <dest f/s> [-b <#files>] [-c <#TB>] [-C] [-D] [-e <excludes>] [-i <#inodes>] [-I] [-m <#jobs_or_nodes>] [-M] [-n <#CPUs>] [-N] [-p <part>] [-S] [-u] [-v] [-V]"
     echo -e "\t-b: # of files in sync batch. Default=50000"
-    echo -e "\t-c: Threshold of capacity in TB defining a heavy user. Default=20"
     echo -e "\t-C: Compare file contents between Src & Dest. This will take longer."
+    echo -e "\t-c: Threshold of capacity in TB defining a heavy user. Default=20"
     echo -e "\t-D: Delete extraneous files from destination."
+    echo -e "\t-d: The mount name of the destination file system, e.g. lustre4."
     echo -e "\t-e: File name with list of users to exclude"
+    echo -e "\t-h: This menu."
+    echo -e "\t-I: Use Direct I/O. Default=no. May cause significant slowdown."
     echo -e "\t-i: Threshold of number of inodes defining a heavy user. Default=1000000."
-    echo -e "\t-m: Maximum number of sync jobs. Default=<# of MDTs>."
     echo -e "\t-M: Only report the calculated MDT balancing. No syncing is done."
-    echo -e "\t-n: Number of CPUs per sync job. Default=64."
+    echo -e "\t-m: Maximum number of sync jobs. Default=<# of MDTs>. If -u is set, this is the max number of nodes used by sync jobs."
     echo -e "\t-N: Do not enable PFL and DoM. Default enables them on root of destination f/s."
+    echo -e "\t-n: Number of CPUs per sync job. Default=64."
     echo -e "\t-p: Slurm Partition to submit to. Default is 'putil'."
-    echo -e "\t-v: Verbose -- display more messages"
+    echo -e "\t-S: Create sparse files if possible. Default=no."
+    echo -e "\t-s: The mount name of the source file system, e.g. lustre1."
+    echo -e "\t-u: Instead of limiting the number of jobs, limit the number of nodes used by the jobs. Changes the meaning of -m."
     echo -e "\t-V: Debug -- display even more messages"
+    echo -e "\t-v: Verbose -- display more messages"
 }
 
-#####  MAIN #####
+##################
+#####  MAIN  #####
+##################
 
-while getopts 'b:Cc:Dd:e:hi:Mm:n:Np:s:Vv' opt; do
+while getopts 'b:Cc:Dd:e:hIi:Mm:n:Np:Ss:uVv' opt; do
     case $opt in
         'b')batch=${OPTARG};;
+        'C')compare="--contents";;
         'c')cthreshold=$((OPTARG*1024*1024*1024));;
-        'C')compare="-c";;
-        'D')delete="-D";;
+        'D')delete="--delete";;
         'd')dstfs=$(basename "${OPTARG}");;
         'e')excl_file=${OPTARG};;
         'h')usage
             exit 0;;
+        'I')directio="--direct";;
         'i')ithreshold=${OPTARG};;
         'M')mdreport=1;;
-        'm')maxjobs=${OPTARG};;
-        'n')numcpus=${OPTARG};;
+        'm')maxjobs_or_nodes=${OPTARG};;
         'N')NODOM=1;;
+        'n')numcpus=${OPTARG};;
         'p')partition=${OPTARG};;
+        'S')sparse="--sparse";;
         's')srcfs=$(basename "${OPTARG}");;
+        'u')used_nodes_check=1;;
         'V')debug=1;;
         'v')verbose=1;;
         \?) echoerr "Invalid option: -${OPTARG}" >&2
@@ -470,12 +502,23 @@ while getopts 'b:Cc:Dd:e:hi:Mm:n:Np:s:Vv' opt; do
     esac
 done
 
-if ! grep -q "${srcfs}" /proc/mounts || ! grep -q "${dstfs}" /proc/mounts; then
+# Test for a real f/s name
+if [[ ! "${srcfs}" =~ ^[[:alnum:]._-]+$ || ! "${dstfs}" =~ ^[[:alnum:]._-]+$ ]]; then
     echoerr "Missing source or destination file system name"
+    echo
     usage
     exit 1
 fi
 
+# Test that f/s is mounted
+if ! grep -qw "${srcfs}" /proc/mounts || ! grep -qw "${dstfs}" /proc/mounts; then
+    echoerr "Source or destination file system name not mounted"
+    echo
+    usage
+    exit 1
+fi
+
+# Test SLURM partition name
 partition=${partition:=putil}
 if ! scontrol show partition "${partition}" &>/dev/null; then
    echoerr "Invalid partition: ${partition}"
@@ -484,43 +527,54 @@ fi
 
 # Verify dsync is in path
 if ! type -P dsync >/dev/null; then
-    echoerr 'Aborting...dsync not in path!'
+    echoerr 'Exiting: dsync not in path!'
     exit 1
 fi
 
+# Setup log file and workdir
 echov "CMD: $0 $*"
-echo "Preparing to sync ${srcfs} to ${dstfs} via the $partition partition..."
+echo "Preparing to sync ${srcfs} to ${dstfs} via the ${partition} partition..."
 begintime=$(date +%s)
 workdir="fssync_$$"
 mkdir ${workdir}
 if [[ $? -ne 0 ]]; then
-    echoerr "ERROR: Could not create work dir ${workdir}"
+    echoerr "Exiting: Could not create work dir ${workdir}"
     exit 1
 fi
+
 # First get inode usages for top users
 get_usages "${srcfs}"
+
 # Set up PFL/DoM
 setpfl
+
 # Next, pre-create user/group directories
 create_user_dirs
 if [[ $mdreport == 1 ]]; then
     exit 0
 fi
+
 # Start file sync
 sync_data
+
 # Wait for jobs to finish
 echo "Waiting for sync jobs to finish..."
+
 # Spin until no more sync jobs
-syncjobs=$(squeue -hp "${partition}" -u root 2>/dev/null | wc -l)
+syncjobs=$(squeue --noheader --partition "${partition}" --user root --format='%j' 2>/dev/null | grep '_sync' | wc -l)
 while [[ $syncjobs -gt 0 ]]; do
    sleep 15
-   syncjobs=$(squeue -hp "${partition}" -u root 2>/dev/null | wc -l)
+   syncjobs=$(squeue --noheader --partition "${partition}" --user root --format='%j' 2>/dev/null | grep '_sync' | wc -l)
 done
 
+# Report total runtime
 endtime=$(date +%s)
+
 tottime=$((endtime-begintime))
 days=$((tottime / 86400))
 hours=$(((tottime % 86400) / 3600))
 min=$((((tottime % 86400) % 3600) / 60 ))
 sec=$(((((tottime % 86400) % 3600) % 60 )))
 echo "Total runtime: ${days}-${hours}:${min}:${sec}"
+
+echo "Total runtime v2: $(datediff @${begintime} @${endtime} --format='%d-%H:%M:%S')"
